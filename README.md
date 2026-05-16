@@ -57,3 +57,9 @@ Build the frontend:
 ```sh
 bun run build
 ```
+
+---
+
+Copyright (c) 2026 Guilherme Otsugua. All rights reserved.
+
+This repository is provided for viewing and evaluation only. No license is granted to copy, modify, distribute, sublicense, or use this code in another project without prior written permission.

@@ -58,6 +58,29 @@ Build the frontend:
 bun run build
 ```
 
+## Verification Strategy
+
+Use the fast loop while iterating on Simeioma:
+
+```sh
+bun run test
+bun run test:ui
+bun run build
+```
+
+This catches model behavior, browser-level interaction regressions, and
+TypeScript/Vite issues in seconds. Reserve native checks for changes that touch
+Tauri windows, permissions, Rust commands, bundling, or desktop-only behavior:
+
+```sh
+cargo check --manifest-path src-tauri/Cargo.toml
+bun run build:desktop:windows
+```
+
+Use visual QA and production executable smoke tests for layout-sensitive desktop
+work, especially launcher placement, transparent windows, drag behavior, and
+native focus issues.
+
 ---
 
 Copyright (c) 2026 Guilherme Otsugua. All rights reserved.

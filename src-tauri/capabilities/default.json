@@ -21,6 +21,8 @@
     "core:window:allow-set-skip-taskbar",
     "core:window:allow-start-dragging",
     "core:window:allow-primary-monitor",
-    "opener:default"
+    "opener:default",
+    "dialog:default",
+    "core:path:allow-resolve-directory"
   ]
 }

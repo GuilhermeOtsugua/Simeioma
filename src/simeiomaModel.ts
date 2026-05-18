@@ -1,4 +1,4 @@
-export type ReminderMode = "minutes" | "hourly" | "hourMinute" | "datetime";
+export type ReminderMode = "periodic" | "timeOfDay";
 export type ReminderTarget = "all" | "important" | "tasks" | "attention";
 export type ExportFormat = "txt" | "markdown" | "png" | "jpeg";
 
@@ -86,7 +86,7 @@ export const DEFAULT_SETTINGS: Settings = {
   exportFormat: "markdown",
   strikeKeybind: "Ctrl + left click",
   scribbleKeybind: "Ctrl + right click",
-  reminderMode: "hourly",
+  reminderMode: "periodic",
   reminderValue: "1",
   reminderTarget: "attention",
   remindersEnabled: true,
@@ -115,8 +115,8 @@ export function nextNotePosition(index: number, origin: { x: number; y: number }
 export function nextNotePositionFromLatest(latest: Note | undefined, origin: { x: number; y: number }) {
   if (!latest?.position) return origin;
   return {
-    x: latest.position.x + 16,
-    y: latest.position.y + NOTE_TITLE_HEIGHT,
+    x: latest.position.x,
+    y: latest.position.y + NOTE_TITLE_HEIGHT + 3,
   };
 }
 
@@ -196,19 +196,52 @@ export function updateNotePosition(
 
 export function isReminderDue(settings: Settings, now = new Date()) {
   const last = settings.lastReminderAt ? new Date(settings.lastReminderAt) : null;
-  if (settings.reminderMode === "minutes") {
-    const minutes = Math.max(1, Number(settings.reminderValue) || 30);
-    return !last || now.getTime() - last.getTime() >= minutes * 60000;
+  if (settings.reminderMode === "timeOfDay") {
+    const [hour, minute] = parseTimeOfDay(settings.reminderValue);
+    if (hour === null || minute === null) return false;
+    const alreadyRemindedToday =
+      last?.getFullYear() === now.getFullYear() &&
+      last.getMonth() === now.getMonth() &&
+      last.getDate() === now.getDate();
+    return now.getHours() > hour || (now.getHours() === hour && now.getMinutes() >= minute)
+      ? !alreadyRemindedToday
+      : false;
   }
-  if (settings.reminderMode === "hourly") {
-    return !last || now.getTime() - last.getTime() >= 60 * 60000;
-  }
-  if (settings.reminderMode === "hourMinute") {
-    const minute = Number(settings.reminderValue.replace(":", ""));
-    return Number.isFinite(minute) && now.getMinutes() === minute && (!last || now.getHours() !== last.getHours());
-  }
-  const target = new Date(settings.reminderValue);
-  return Number.isFinite(target.getTime()) && now >= target && (!last || last < target);
+
+  const hours = Number(normalizePeriodicHours(settings.reminderValue));
+  return !last || now.getTime() - last.getTime() >= hours * 60 * 60000;
+}
+
+export function normalizePeriodicHours(value: string) {
+  const hours = Number(value);
+  if (!Number.isFinite(hours)) return "1";
+  return String(Math.max(0.25, hours));
+}
+
+export function periodicLabel(value: string) {
+  const totalMinutes = Math.round(Number(normalizePeriodicHours(value)) * 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  const parts = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}min`);
+  return `Every ${parts.join(" ") || "15min"}`;
+}
+
+export function normalizeTimeOfDay(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 4).padStart(4, "0");
+  const hour = Math.min(23, Number(digits.slice(0, 2)));
+  const minute = Math.min(59, Number(digits.slice(2, 4)));
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function parseTimeOfDay(value: string): [number | null, number | null] {
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return [null, null];
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return [null, null];
+  return [hour, minute];
 }
 
 function hasOpenTasks(note: Note) {

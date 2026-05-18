@@ -31,7 +31,8 @@ body,
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -47,6 +48,27 @@ svg {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.6;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(36, 32, 25, 0.28) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(36, 32, 25, 0.26);
+  background-clip: padding-box;
 }
 
 .launcher-shell {
@@ -110,6 +132,80 @@ svg {
   background: color-mix(in srgb, var(--strip-color), white 44%);
   color: #242019;
   transform: translateY(-50%);
+}
+
+.surface-popover {
+  position: absolute;
+  z-index: 20;
+  padding: 10px;
+  border: 1px solid rgba(42, 35, 23, 0.16);
+  border-radius: 16px;
+  background: #f9f6e8;
+  color: #242019;
+}
+
+.surface-popover strong {
+  display: block;
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.surface-popover div {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.surface-popover button {
+  min-height: 28px;
+  border: 1px solid rgba(42, 35, 23, 0.16);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.surface-popover button:hover,
+.surface-popover button:focus-visible {
+  background: rgba(35, 30, 22, 0.08);
+  outline: none;
+}
+
+.surface-popover .danger {
+  color: #a82121;
+  border-color: rgba(168, 33, 33, 0.3);
+}
+
+.surface-popover .ghost-close {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.note-action-popover {
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+}
+
+.keybind-popover {
+  left: 18px;
+  right: 18px;
+  top: 72px;
+}
+
+.keybind-popover p {
+  margin: 0 0 8px;
+  padding: 8px;
+  border: 1px solid rgba(42, 35, 23, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.58);
+  font-size: 12px;
 }
 
 .exit-confirmation strong {
@@ -287,7 +383,10 @@ svg {
 }
 
 .setting-row input,
-.setting-row select {
+.setting-row select,
+.keybind-input,
+.path-picker button,
+.timing-picker button {
   width: 100%;
   min-height: 30px;
   border: 1px solid rgba(42, 35, 23, 0.12);
@@ -296,6 +395,52 @@ svg {
   color: #242019;
   padding: 0 8px;
   outline: none;
+}
+
+.path-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.path-picker button {
+  width: auto;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.keybind-input {
+  display: grid;
+  place-items: center start;
+  text-align: left;
+  cursor: text;
+}
+
+.timing-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.timing-picker button {
+  display: grid;
+  gap: 2px;
+  place-items: center;
+  min-height: 42px;
+  padding: 5px 6px;
+  cursor: pointer;
+}
+
+.timing-picker button.is-active,
+.keybind-input:focus-visible,
+.path-picker button:hover {
+  border-color: rgba(42, 35, 23, 0.32);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.timing-picker small {
+  font-size: 9px;
+  color: rgba(36, 32, 25, 0.58);
 }
 
 .setting-row input[type="checkbox"] {
@@ -423,7 +568,7 @@ svg {
 .note-titlebar {
   position: relative;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 6px;
   padding: 8px 10px 3px;
@@ -444,8 +589,7 @@ svg {
   color: color-mix(in srgb, var(--note-ink), transparent 56%);
 }
 
-.icon-button,
-.scribble-toggle {
+.icon-button {
   display: grid;
   place-items: center;
   width: 24px;
@@ -500,6 +644,77 @@ svg {
   min-height: 0;
   overflow: auto;
   padding: 8px 10px 36px;
+}
+
+.note-body-editor {
+  width: 100%;
+  min-height: 92px;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.note-body-editor::placeholder {
+  color: color-mix(in srgb, var(--note-ink), transparent 62%);
+}
+
+.note-body-preview {
+  min-height: 92px;
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  cursor: text;
+}
+
+.note-body-preview p {
+  min-height: 18px;
+  margin: 0 0 5px;
+}
+
+.note-body-preview strong {
+  font-weight: 750;
+}
+
+.note-body-preview em {
+  font-style: italic;
+}
+
+.note-body-preview s,
+.note-body-preview .is-done {
+  color: color-mix(in srgb, var(--note-ink), transparent 38%);
+}
+
+.note-body-preview code {
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--note-bg), #000 7%);
+}
+
+.placeholder-line {
+  color: color-mix(in srgb, var(--note-ink), transparent 62%);
+}
+
+.preview-task {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px;
+}
+
+.preview-checkbox {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1px solid color-mix(in srgb, var(--note-ink), transparent 46%);
+  border-radius: 5px;
 }
 
 .note-line {
@@ -647,24 +862,31 @@ svg {
   cursor: crosshair;
 }
 
-.scribble-toggle {
+.note-resize-handle {
   position: absolute;
-  right: 9px;
-  bottom: 9px;
-  z-index: 5;
+  right: 0;
+  bottom: 0;
+  z-index: 7;
+  width: 32px;
+  height: 32px;
+  cursor: nwse-resize;
+}
+
+.note-resize-handle::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 10px;
+  height: 10px;
+  border-right: 1px solid color-mix(in srgb, var(--note-ink), transparent 62%);
+  border-bottom: 1px solid color-mix(in srgb, var(--note-ink), transparent 62%);
   opacity: 0;
-  background: color-mix(in srgb, var(--note-bg), white 18%);
+  transition: opacity 120ms ease;
 }
 
-.note-shell:hover .scribble-toggle,
-.note-shell.is-scribbling .scribble-toggle {
+.note-shell:hover .note-resize-handle::after {
   opacity: 1;
-}
-
-.scribble-toggle.is-active {
-  opacity: 1;
-  color: var(--note-ink);
-  background: color-mix(in srgb, var(--note-bg), white 38%);
 }
 
 @keyframes strike-draw {

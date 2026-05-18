@@ -31,8 +31,12 @@ test("settings fields persist to local storage", async ({ page }) => {
   await page.getByLabel("Save path").fill("C:\\Users\\guilherme\\Desktop\\notes");
   await page.getByLabel("Format").selectOption("txt");
   await page.getByLabel("Reminders").uncheck();
-  await page.getByLabel("Timing").selectOption("minutes");
-  await page.getByLabel("Value").fill("15");
+  await page.getByRole("button", { name: "Periodic" }).click();
+  await page.getByLabel("Periodic hours").fill("0030");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "Time of day" }).click();
+  await page.getByLabel("Time of day").fill("0930");
+  await page.keyboard.press("Enter");
   await page.getByLabel("Target").selectOption("tasks");
 
   const settings = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").settings, storageKey);
@@ -40,9 +44,59 @@ test("settings fields persist to local storage", async ({ page }) => {
   expect(settings.exportPath).toBe("C:\\Users\\guilherme\\Desktop\\notes");
   expect(settings.exportFormat).toBe("txt");
   expect(settings.remindersEnabled).toBe(false);
-  expect(settings.reminderMode).toBe("minutes");
-  expect(settings.reminderValue).toBe("15");
+  expect(settings.reminderMode).toBe("timeOfDay");
+  expect(settings.reminderValue).toBe("09:30");
   expect(settings.reminderTarget).toBe("tasks");
+});
+
+test("keybind fields capture released combinations", async ({ page }) => {
+  await page.goto("/?role=settings");
+
+  await page.getByRole("button", { name: "Cross out keybind" }).click();
+  await page.keyboard.down("Control");
+  await page.keyboard.down("Shift");
+  await page.keyboard.press("KeyX");
+  await page.keyboard.up("Shift");
+  await page.keyboard.up("Control");
+
+  const settings = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").settings, storageKey);
+  expect(settings.strikeKeybind).toBe("Ctrl + Shift + X");
+});
+
+test("right clicking settings controls resets them to defaults", async ({ page }) => {
+  await page.goto("/?role=settings");
+
+  await page.getByLabel("Format").selectOption("txt");
+  await page.getByLabel("Format").click({ button: "right" });
+  await page.getByRole("button", { name: "Cross out keybind" }).click();
+  await page.keyboard.down("Control");
+  await page.keyboard.press("KeyX");
+  await page.keyboard.up("Control");
+  await page.getByRole("button", { name: "Cross out keybind" }).click({ button: "right" });
+
+  const settings = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").settings, storageKey);
+  expect(settings.exportFormat).toBe("markdown");
+  expect(settings.strikeKeybind).toBe("Ctrl + left click");
+});
+
+test("timing inputs use masked hour-minute entry", async ({ page }) => {
+  await page.goto("/?role=settings");
+
+  await page.getByRole("button", { name: "Periodic" }).click();
+  const periodic = page.getByLabel("Periodic hours");
+  await periodic.fill("0130");
+  await expect(periodic).toHaveValue("01:30");
+  await page.keyboard.press("Enter");
+
+  await page.getByRole("button", { name: "Time of day" }).click();
+  const timeOfDay = page.getByLabel("Time of day");
+  await timeOfDay.fill("1345");
+  await expect(timeOfDay).toHaveValue("13:45");
+  await page.keyboard.press("Enter");
+
+  const settings = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").settings, storageKey);
+  expect(settings.reminderMode).toBe("timeOfDay");
+  expect(settings.reminderValue).toBe("13:45");
 });
 
 test("note body accepts continuous typing without losing focus", async ({ page }) => {
@@ -57,6 +111,23 @@ test("note body accepts continuous typing without losing focus", async ({ page }
   await expect(editor).toHaveValue("Review the client brief");
   const note = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").notes[0], storageKey);
   expect(note.lines[0].text).toBe("Review the client brief");
+});
+
+test("normal body typing keeps focus after each character", async ({ page }) => {
+  await seedState(page, {
+    notes: [testNote({ id: "focus-note", lines: [{ id: "focus-line", text: "", task: false, crossed: false }] })],
+  });
+
+  await page.goto("/?role=note&id=focus-note");
+  const editor = page.getByLabel("Note line").first();
+  await editor.focus();
+
+  for (const character of "abc") {
+    await page.keyboard.type(character);
+    await expect(editor).toBeFocused();
+  }
+
+  await expect(editor).toHaveValue("abc");
 });
 
 async function noteCount(page: import("@playwright/test").Page) {

@@ -6,7 +6,9 @@ import {
   createNoteInState,
   isReminderDue,
   markNoteViewed,
+  normalizePeriodicHours,
   nextNotePosition,
+  periodicLabel,
   updateNotePosition,
   reminderNotes,
   resetNotesForDebug,
@@ -18,8 +20,21 @@ import {
 describe("Simeioma model", () => {
   test("defaults reminders to hourly attention checks", () => {
     expect(DEFAULT_SETTINGS.remindersEnabled).toBe(true);
-    expect(DEFAULT_SETTINGS.reminderMode).toBe("hourly");
+    expect(DEFAULT_SETTINGS.reminderMode).toBe("periodic");
+    expect(DEFAULT_SETTINGS.reminderValue).toBe("1");
     expect(DEFAULT_SETTINGS.reminderTarget).toBe("attention");
+  });
+
+  test("formats periodic reminder values as short human labels", () => {
+    expect(periodicLabel("0.5")).toBe("Every 30min");
+    expect(periodicLabel("1")).toBe("Every 1h");
+    expect(periodicLabel("1.5")).toBe("Every 1h 30min");
+  });
+
+  test("normalizes periodic reminder values as hour numbers", () => {
+    expect(normalizePeriodicHours("0.5")).toBe("0.5");
+    expect(normalizePeriodicHours("bad")).toBe("1");
+    expect(normalizePeriodicHours("0")).toBe("0.25");
   });
 
   test("creates at most ten notes without advancing color after the cap", () => {
@@ -62,7 +77,7 @@ describe("Simeioma model", () => {
     expect(reset.launcher).toBe(result.state.launcher);
   });
 
-  test("stacks new note positions down by one title height", () => {
+  test("legacy indexed note positions still cascade for fallback placement", () => {
     expect(nextNotePosition(0, { x: 100, y: 200 })).toEqual({ x: 100, y: 200 });
     expect(nextNotePosition(1, { x: 100, y: 200 })).toEqual({ x: 116, y: 238 });
     expect(nextNotePosition(2, { x: 100, y: 200 })).toEqual({ x: 132, y: 276 });
@@ -84,7 +99,7 @@ describe("Simeioma model", () => {
       origin: { x: 400, y: 500 },
     });
 
-    expect(second.note?.position).toEqual({ x: 116, y: 238 });
+    expect(second.note?.position).toEqual({ x: 100, y: 241 });
   });
 
   test("attention reminders include important notes and open task notes", () => {
@@ -157,17 +172,32 @@ describe("Simeioma model", () => {
     expect(next.notes[0].position).toEqual({ x: 320, y: 410 });
   });
 
-  test("hourly reminders become due after one hour", () => {
+  test("periodic reminders become due after the selected hour interval", () => {
     expect(
       isReminderDue(
-        { ...DEFAULT_SETTINGS, lastReminderAt: "2026-05-18T12:00:00.000Z" },
-        new Date("2026-05-18T13:00:00.000Z"),
+        { ...DEFAULT_SETTINGS, reminderMode: "periodic", reminderValue: "0.5", lastReminderAt: "2026-05-18T12:00:00.000Z" },
+        new Date("2026-05-18T12:30:00.000Z"),
       ),
     ).toBe(true);
     expect(
       isReminderDue(
-        { ...DEFAULT_SETTINGS, lastReminderAt: "2026-05-18T12:30:00.000Z" },
-        new Date("2026-05-18T13:00:00.000Z"),
+        { ...DEFAULT_SETTINGS, reminderMode: "periodic", reminderValue: "0.5", lastReminderAt: "2026-05-18T12:10:00.000Z" },
+        new Date("2026-05-18T12:30:00.000Z"),
+      ),
+    ).toBe(false);
+  });
+
+  test("time of day reminders become due once per selected day time", () => {
+    expect(
+      isReminderDue(
+        { ...DEFAULT_SETTINGS, reminderMode: "timeOfDay", reminderValue: "09:30", lastReminderAt: "2026-05-17T09:30:00.000Z" },
+        new Date(2026, 4, 18, 9, 30),
+      ),
+    ).toBe(true);
+    expect(
+      isReminderDue(
+        { ...DEFAULT_SETTINGS, reminderMode: "timeOfDay", reminderValue: "09:30", lastReminderAt: "2026-05-18T09:30:00.000Z" },
+        new Date(2026, 4, 18, 10, 0),
       ),
     ).toBe(false);
   });

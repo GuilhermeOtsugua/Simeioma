@@ -10,6 +10,7 @@ import {
   nextNotePosition,
   periodicLabel,
   updateNotePosition,
+  updateNoteSize,
   reminderNotes,
   resetNotesForDebug,
   unviewedReminderCount,
@@ -100,6 +101,23 @@ describe("Simeioma model", () => {
     });
 
     expect(second.note?.position).toEqual({ x: 100, y: 241 });
+  });
+
+  test("new notes inherit the latest note size", () => {
+    const first = createNoteInState(createInitialState(0), {
+      id: "first",
+      lineId: "first-line",
+      now: "2026-05-18T12:00:00.000Z",
+    }).state;
+    const resized = updateNoteSize(first, "first", { width: 320, height: 240 });
+
+    const second = createNoteInState(resized, {
+      id: "second",
+      lineId: "second-line",
+      now: "2026-05-18T12:01:00.000Z",
+    });
+
+    expect(second.note?.size).toEqual({ width: 320, height: 240 });
   });
 
   test("attention reminders include important notes and open task notes", () => {

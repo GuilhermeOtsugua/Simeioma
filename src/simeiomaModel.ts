@@ -145,7 +145,7 @@ export function createNoteInState(
     updatedAt: input.now,
     viewedAt: input.now,
     position: input.origin ? nextNotePositionFromLatest(state.notes.at(-1), input.origin) : undefined,
-    size: { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE },
+    size: state.notes.at(-1)?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE },
   };
 
   return {
@@ -191,6 +191,17 @@ export function updateNotePosition(
   return {
     ...state,
     notes: state.notes.map((note) => (note.id === noteId ? { ...note, position } : note)),
+  };
+}
+
+export function updateNoteSize(
+  state: AppState,
+  noteId: string,
+  size: { width: number; height: number },
+): AppState {
+  return {
+    ...state,
+    notes: state.notes.map((note) => (note.id === noteId ? { ...note, size } : note)),
   };
 }
 

@@ -33,6 +33,7 @@ import {
   unviewedReminderCount,
   unviewedReminderNotes,
   updateNotePosition,
+  updateNoteSize,
   type AppState,
   type ExportFormat,
   type Note,
@@ -523,7 +524,7 @@ function NoteWindow(props: { noteId: string }) {
   const mentions = createMemo(() => collectMentions(note(), otherNotes()));
 
   onMount(() => {
-    configureNoteWindow();
+    configureNoteWindow(props.noteId);
     markCurrentNoteViewed(props.noteId, setState);
     focusFirstLine();
     hydrateCanvas();
@@ -600,9 +601,18 @@ function NoteWindow(props: { noteId: string }) {
     await getCurrentWindow().setSize(new LogicalSize(width, height));
   };
 
-  const stopNoteResize = () => {
+  const stopNoteResize = async () => {
+    if (!resizingNote) return;
     resizingNote = false;
     resizeStart = null;
+    if (!isTauri()) return;
+    const size = await getCurrentWindow().outerSize();
+    const scale = (await primaryMonitor())?.scaleFactor || 1;
+    persistNoteSize(
+      props.noteId,
+      { width: size.width / scale, height: size.height / scale },
+      setState,
+    );
   };
 
   createEffect(() => {
@@ -1461,6 +1471,12 @@ function persistNotePosition(noteId: string, position: { x: number; y: number },
   setState?.(next);
 }
 
+function persistNoteSize(noteId: string, size: { width: number; height: number }, setState?: (state: AppState) => void) {
+  const next = updateNoteSize(loadState(), noteId, size);
+  saveState(next);
+  setState?.(next);
+}
+
 function createInitialState(): AppState {
   return createModelInitialState(randomColorIndex());
 }
@@ -1571,12 +1587,14 @@ async function readWindowAnchor(): Promise<LauncherAnchor> {
   };
 }
 
-async function configureNoteWindow() {
+async function configureNoteWindow(noteId: string) {
   if (!isTauri()) return;
   const appWindow = getCurrentWindow();
+  const note = loadState().notes.find((item) => item.id === noteId);
+  const size = note?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE };
   await appWindow.setAlwaysOnTop(true);
   await appWindow.setSkipTaskbar(true);
-  await appWindow.setSize(new LogicalSize(DEFAULT_NOTE_SIZE, DEFAULT_NOTE_SIZE));
+  await appWindow.setSize(new LogicalSize(size.width, size.height));
 }
 
 async function configureUtilityWindow(width: number, height: number) {
@@ -1653,13 +1671,15 @@ async function openNoteWindow(id: string) {
   const x = note?.position?.x ?? origin.x;
   const y = note?.position?.y ?? origin.y;
 
+  const size = note?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE };
+
   const webview = new WebviewWindow(noteLabel(id), {
     url: `index.html?role=note&id=${encodeURIComponent(id)}`,
     title: "Simeioma Note",
     x: Math.max(16, x),
     y: Math.max(16, y),
-    width: DEFAULT_NOTE_SIZE,
-    height: DEFAULT_NOTE_SIZE,
+    width: size.width,
+    height: size.height,
     minWidth: 176,
     minHeight: 176,
     decorations: false,

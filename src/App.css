@@ -657,6 +657,26 @@ svg {
   padding: 8px 10px 36px;
 }
 
+.note-editor-stack {
+  position: relative;
+  min-height: 92px;
+}
+
+.note-editor-stack .note-body-preview {
+  display: block;
+}
+
+.note-editor-stack.is-editing .note-body-preview {
+  display: none;
+}
+
+.note-editor-stack:not(.is-editing) .note-body-editor {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .note-body-editor {
   width: 100%;
   min-height: 92px;

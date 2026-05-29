@@ -130,6 +130,25 @@ test("normal body typing keeps focus after each character", async ({ page }) => 
   await expect(editor).toHaveValue("abc");
 });
 
+test("note body undo survives blurring to preview", async ({ page }) => {
+  await seedState(page, {
+    notes: [testNote({ id: "undo-note", lines: [{ id: "undo-line", text: "", task: false, crossed: false }] })],
+  });
+
+  await page.goto("/?role=note&id=undo-note");
+  const editor = page.getByLabel("Note line").first();
+  await editor.focus();
+  await page.keyboard.type("Undo me");
+
+  await page.locator(".note-title-input").click();
+  await page.locator(".note-body-preview").click();
+  for (const _ of "Undo me") {
+    await page.keyboard.press("Control+Z");
+  }
+
+  await expect(editor).toHaveValue("");
+});
+
 async function noteCount(page: import("@playwright/test").Page) {
   return page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{\"notes\":[]}").notes.length, storageKey);
 }

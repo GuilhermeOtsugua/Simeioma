@@ -520,8 +520,16 @@ function NoteWindow(props: { noteId: string }) {
   const note = createMemo(() => state().notes.find((item) => item.id === props.noteId));
   const noteColor = createMemo(() => getColor(note()?.colorKey));
   const otherNotes = createMemo(() => state().notes.filter((item) => item.id !== props.noteId));
-  const bodyText = createMemo(() => note()?.lines.map((line) => line.text).join("\n") ?? "");
+  const storedBodyText = createMemo(() => note()?.lines.map((line) => line.text).join("\n") ?? "");
+  const [bodyDraft, setBodyDraft] = createSignal("");
+  const bodyText = createMemo(() => bodyDraft());
   const mentions = createMemo(() => collectMentions(note(), otherNotes()));
+
+  createEffect(() => {
+    if (document.activeElement !== bodyRef) {
+      setBodyDraft(storedBodyText());
+    }
+  });
 
   onMount(() => {
     configureNoteWindow(props.noteId);
@@ -757,20 +765,16 @@ function NoteWindow(props: { noteId: string }) {
           <div class="note-divider" />
 
           <section class="note-body">
-            <Show
-              when={bodyFocused()}
-              fallback={
-                <div
-                  class="note-body-preview"
-                  onClick={() => {
-                    setBodyFocused(true);
-                    window.setTimeout(() => bodyRef?.focus(), 0);
-                  }}
-                >
-                  {renderMarkdownPreview(bodyText())}
-                </div>
-              }
-            >
+            <div class="note-editor-stack" classList={{ "is-editing": bodyFocused() }}>
+              <div
+                class="note-body-preview"
+                onClick={() => {
+                  setBodyFocused(true);
+                  window.setTimeout(() => bodyRef?.focus(), 0);
+                }}
+              >
+                {renderMarkdownPreview(bodyText())}
+              </div>
               <textarea
                 ref={bodyRef}
                 class="note-body-editor"
@@ -783,10 +787,12 @@ function NoteWindow(props: { noteId: string }) {
                   if (event.ctrlKey) {
                     event.preventDefault();
                     toggleCurrentTextareaLineStrike(event.currentTarget);
+                    setBodyDraft(event.currentTarget.value);
                     updateBodyText(event.currentTarget.value);
                   }
                 }}
                 onInput={(event) => {
+                  setBodyDraft(event.currentTarget.value);
                   updateBodyText(event.currentTarget.value);
                   growBody();
                 }}
@@ -799,7 +805,7 @@ function NoteWindow(props: { noteId: string }) {
                   setBodyFocused(false);
                 }}
               />
-            </Show>
+            </div>
 
             <Show when={mentions().length}>
               <div class="mention-row">

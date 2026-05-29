@@ -560,7 +560,7 @@ function NoteWindow(props: { noteId: string }) {
     if (!isTauri() || event.button !== 0 || scribble()) return;
     if (event.ctrlKey) return;
     const target = event.target as HTMLElement;
-    if (target.closest("button, select, .color-popover, .mention-row")) return;
+    if (target.closest("button, input, select, textarea, .note-body, .color-popover, .mention-row")) return;
     window.clearTimeout(noteDragTimer);
     notePointerDownAt = { x: event.clientX, y: event.clientY };
     if (HOLD_TO_DRAG_MS > 0) {

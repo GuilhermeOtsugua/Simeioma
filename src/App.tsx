@@ -52,6 +52,7 @@ const STRIP_VISIBLE_WIDTH = 3;
 const HOLD_TO_DRAG_MS = 0;
 const LAUNCHER_CANVAS_WIDTH = 208;
 const LAUNCHER_CANVAS_HEIGHT = 244;
+const LAUNCHER_SCREEN_MARGIN = 12;
 
 const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(CHANNEL_NAME) : null;
 let launcherWasPlaced = false;
@@ -236,6 +237,7 @@ function LauncherWindow() {
   const settleLauncherDrag = () => {
     window.clearTimeout(settleDragTimer);
     settleDragTimer = window.setTimeout(async () => {
+      await clampCurrentWindowToWorkArea(LAUNCHER_SCREEN_MARGIN);
       launcherAnchor = await readWindowAnchor();
       launcherUserDragging = false;
     }, 260);
@@ -1728,6 +1730,7 @@ async function configureLauncherWindow(
     await appWindow.setSkipTaskbar(true);
     await appWindow.setResizable(false);
     await appWindow.setSize(new LogicalSize(width, height));
+    await clampCurrentWindowToWorkArea(LAUNCHER_SCREEN_MARGIN);
     if (run !== launcherConfigureRun) return;
     if (anchor || launcherWasPlaced) {
       return;
@@ -1829,11 +1832,34 @@ async function positionWindow(width: number, height: number) {
   if (!monitor) return;
   const scale = monitor.scaleFactor || 1;
   const work = monitor.workArea;
+  const left = work.position.x / scale;
+  const top = work.position.y / scale;
   const right = (work.position.x + work.size.width) / scale;
   const bottom = (work.position.y + work.size.height) / scale;
-  const x = right - 16 - STRIP_HIT_WIDTH / 2 - width / 2;
-  const y = bottom - 16 - STRIP_HEIGHT / 2 - height / 2;
-  await getCurrentWindow().setPosition(new LogicalPosition(Math.max(0, x), Math.max(0, y)));
+  const rawX = right - 16 - STRIP_HIT_WIDTH / 2 - width / 2;
+  const rawY = bottom - 16 - STRIP_HEIGHT / 2 - height / 2;
+  const x = clamp(rawX, left + LAUNCHER_SCREEN_MARGIN, right - width - LAUNCHER_SCREEN_MARGIN);
+  const y = clamp(rawY, top + LAUNCHER_SCREEN_MARGIN, bottom - height - LAUNCHER_SCREEN_MARGIN);
+  await getCurrentWindow().setPosition(new LogicalPosition(x, y));
+}
+
+async function clampCurrentWindowToWorkArea(margin: number) {
+  if (!isTauri()) return;
+  const monitor = await primaryMonitor();
+  if (!monitor) return;
+  const scale = monitor.scaleFactor || 1;
+  const work = monitor.workArea;
+  const position = await getCurrentWindow().outerPosition();
+  const size = await getCurrentWindow().outerSize();
+  const left = work.position.x / scale;
+  const top = work.position.y / scale;
+  const right = (work.position.x + work.size.width) / scale;
+  const bottom = (work.position.y + work.size.height) / scale;
+  const x = clamp(position.x / scale, left + margin, right - size.width / scale - margin);
+  const y = clamp(position.y / scale, top + margin, bottom - size.height / scale - margin);
+  if (Math.abs(x - position.x / scale) > 0.5 || Math.abs(y - position.y / scale) > 0.5) {
+    await getCurrentWindow().setPosition(new LogicalPosition(x, y));
+  }
 }
 
 async function openNoteWindow(id: string) {

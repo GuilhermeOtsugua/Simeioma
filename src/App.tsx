@@ -52,6 +52,8 @@ const STRIP_VISIBLE_WIDTH = 3;
 const HOLD_TO_DRAG_MS = 0;
 const LAUNCHER_CANVAS_WIDTH = 208;
 const LAUNCHER_CANVAS_HEIGHT = 244;
+const LAUNCHER_IDLE_CANVAS_WIDTH = 26;
+const LAUNCHER_IDLE_CANVAS_HEIGHT = 104;
 const LAUNCHER_SCREEN_MARGIN = 12;
 
 const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(CHANNEL_NAME) : null;
@@ -1719,8 +1721,9 @@ async function configureLauncherWindow(
   void menuOpen;
   void hovered;
   void confirmingExit;
-  const width = LAUNCHER_CANVAS_WIDTH;
-  const height = LAUNCHER_CANVAS_HEIGHT;
+  const expanded = menuOpen || confirmingExit;
+  const width = expanded ? LAUNCHER_CANVAS_WIDTH : LAUNCHER_IDLE_CANVAS_WIDTH;
+  const height = expanded ? LAUNCHER_CANVAS_HEIGHT : LAUNCHER_IDLE_CANVAS_HEIGHT;
   const appWindow = getCurrentWindow();
   try {
     const monitor = await primaryMonitor();
@@ -1733,6 +1736,10 @@ async function configureLauncherWindow(
     await clampCurrentWindowToWorkArea(LAUNCHER_SCREEN_MARGIN);
     if (run !== launcherConfigureRun) return;
     if (anchor || launcherWasPlaced) {
+      const nextAnchor = anchor ?? (await readWindowAnchor());
+      await positionLauncherFromAnchor(width, height, nextAnchor);
+      if (run !== launcherConfigureRun) return;
+      setAnchor?.(await readWindowAnchor());
       return;
     } else {
       const work = monitor?.workArea;
@@ -1838,6 +1845,22 @@ async function positionWindow(width: number, height: number) {
   const bottom = (work.position.y + work.size.height) / scale;
   const rawX = right - 16 - STRIP_HIT_WIDTH / 2 - width / 2;
   const rawY = bottom - 16 - STRIP_HEIGHT / 2 - height / 2;
+  const x = clamp(rawX, left + LAUNCHER_SCREEN_MARGIN, right - width - LAUNCHER_SCREEN_MARGIN);
+  const y = clamp(rawY, top + LAUNCHER_SCREEN_MARGIN, bottom - height - LAUNCHER_SCREEN_MARGIN);
+  await getCurrentWindow().setPosition(new LogicalPosition(x, y));
+}
+
+async function positionLauncherFromAnchor(width: number, height: number, anchor: LauncherAnchor) {
+  const monitor = await primaryMonitor();
+  if (!monitor) return;
+  const scale = monitor.scaleFactor || 1;
+  const work = monitor.workArea;
+  const left = work.position.x / scale;
+  const top = work.position.y / scale;
+  const right = (work.position.x + work.size.width) / scale;
+  const bottom = (work.position.y + work.size.height) / scale;
+  const rawX = right - anchor.right - STRIP_HIT_WIDTH / 2 - width / 2;
+  const rawY = bottom - anchor.bottom - STRIP_HEIGHT / 2 - height / 2;
   const x = clamp(rawX, left + LAUNCHER_SCREEN_MARGIN, right - width - LAUNCHER_SCREEN_MARGIN);
   const y = clamp(rawY, top + LAUNCHER_SCREEN_MARGIN, bottom - height - LAUNCHER_SCREEN_MARGIN);
   await getCurrentWindow().setPosition(new LogicalPosition(x, y));

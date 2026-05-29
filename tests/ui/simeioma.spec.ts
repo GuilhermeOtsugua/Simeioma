@@ -149,6 +149,34 @@ test("note body undo survives blurring to preview", async ({ page }) => {
   await expect(editor).toHaveValue("");
 });
 
+test("note preview renders common GFM blocks", async ({ page }) => {
+  await seedState(page, {
+    notes: [
+      testNote({
+        id: "gfm-note",
+        lines: [
+          {
+            id: "gfm-line",
+            text: "# Plan\n- [x] Ship it\n- bullet\n> quote\n```ts\nconst done = true\n```\n[docs](https://example.com)",
+            task: false,
+            crossed: false,
+          },
+        ],
+      }),
+    ],
+  });
+
+  await page.goto("/?role=note&id=gfm-note");
+  await page.locator(".note-title-input").click();
+
+  await expect(page.locator(".preview-heading", { hasText: "Plan" })).toBeVisible();
+  await expect(page.locator(".preview-task.is-done", { hasText: "Ship it" })).toBeVisible();
+  await expect(page.locator(".preview-list", { hasText: "bullet" })).toBeVisible();
+  await expect(page.locator(".preview-quote", { hasText: "quote" })).toBeVisible();
+  await expect(page.locator(".preview-code-block", { hasText: "const done = true" })).toBeVisible();
+  await expect(page.locator(".preview-link", { hasText: "docs" })).toHaveAttribute("href", "https://example.com");
+});
+
 async function noteCount(page: import("@playwright/test").Page) {
   return page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{\"notes\":[]}").notes.length, storageKey);
 }

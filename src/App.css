@@ -711,6 +711,63 @@ svg {
   margin: 0 0 5px;
 }
 
+.note-body-preview .preview-heading {
+  margin-top: 2px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.note-body-preview .preview-heading.h1 {
+  font-size: 18px;
+}
+
+.note-body-preview .preview-heading.h2 {
+  font-size: 16px;
+}
+
+.note-body-preview .preview-heading.h3,
+.note-body-preview .preview-heading.h4,
+.note-body-preview .preview-heading.h5,
+.note-body-preview .preview-heading.h6 {
+  font-size: 14px;
+}
+
+.note-body-preview .preview-list {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 3px;
+}
+
+.note-body-preview .preview-quote {
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--note-ink), transparent 56%);
+  color: color-mix(in srgb, var(--note-ink), transparent 18%);
+}
+
+.note-body-preview .preview-hr {
+  height: 1px;
+  margin: 8px 0;
+  border: 0;
+  background: color-mix(in srgb, var(--note-line), #000 8%);
+}
+
+.note-body-preview .preview-code-block {
+  margin: 4px 0 7px;
+  padding: 7px;
+  overflow: auto;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--note-bg), #000 7%);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.note-body-preview .preview-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
 .note-body-preview strong {
   font-weight: 750;
 }

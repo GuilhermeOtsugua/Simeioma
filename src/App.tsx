@@ -714,6 +714,18 @@ function NoteWindow(props: { noteId: string }) {
             >
               {StarIcon()}
             </button>
+            <button
+              class="icon-button note-close-button close-action"
+              title="Close note"
+              aria-label="Close note"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                closeCurrentWindow();
+              }}
+            >
+              {CloseIcon()}
+            </button>
             <Show when={paletteOpen()}>
               <div class="color-popover">
                 <For each={NOTE_COLORS}>

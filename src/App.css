@@ -568,7 +568,7 @@ svg {
 .note-titlebar {
   position: relative;
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto auto auto;
   align-items: center;
   gap: 6px;
   padding: 8px 10px 3px;
@@ -618,6 +618,17 @@ svg {
   color: var(--note-ink);
   background: color-mix(in srgb, var(--note-bg), white 26%);
   border-color: color-mix(in srgb, var(--note-ink), transparent 54%);
+}
+
+.note-close-button {
+  color: #a82121;
+  border-color: rgba(168, 33, 33, 0.34);
+}
+
+.note-close-button:hover,
+.note-close-button:focus-visible {
+  background: rgba(168, 33, 33, 0.1);
+  border-color: rgba(168, 33, 33, 0.48);
 }
 
 .note-divider {

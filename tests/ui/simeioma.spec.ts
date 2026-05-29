@@ -61,6 +61,9 @@ test("keybind fields capture released combinations", async ({ page }) => {
 
   const settings = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").settings, storageKey);
   expect(settings.strikeKeybind).toBe("Ctrl + Shift + X");
+  expect(settings.copyNoteKeybind).toBe("Ctrl + Shift + C");
+  expect(settings.newNoteKeybind).toBe("Ctrl + N");
+  expect(settings.hideNotesKeybind).toBe("Ctrl + Shift + H");
 });
 
 test("right clicking settings controls resets them to defaults", async ({ page }) => {
@@ -147,6 +150,18 @@ test("note body undo survives blurring to preview", async ({ page }) => {
   }
 
   await expect(editor).toHaveValue("");
+});
+
+test("focused note new-note keybinding creates another note", async ({ page }) => {
+  await seedState(page, {
+    notes: [testNote({ id: "shortcut-note", lines: [{ id: "shortcut-line", text: "body", task: false, crossed: false }] })],
+  });
+
+  await page.goto("/?role=note&id=shortcut-note");
+  await page.getByLabel("Note line").first().focus();
+  await page.keyboard.press("Control+N");
+
+  await expect.poll(() => noteCount(page)).toBe(2);
 });
 
 test("note preview renders common GFM blocks", async ({ page }) => {

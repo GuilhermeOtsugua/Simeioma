@@ -109,6 +109,9 @@ function LauncherWindow() {
       if (event.data?.type === "state") {
         setState(loadState());
       }
+      if (event.data?.type === "notes-hidden") {
+        setNotesHidden(true);
+      }
     };
     channel?.addEventListener("message", onMessage);
 
@@ -531,6 +534,46 @@ function NoteWindow(props: { noteId: string }) {
     }
   });
 
+  const createNoteFromShortcut = async () => {
+    const latest = loadState();
+    const current = latest.notes.find((item) => item.id === props.noteId);
+    const result = createNoteInState(latest, {
+      id: createId(),
+      lineId: createId(),
+      now: new Date().toISOString(),
+      origin: current?.position ?? (await noteSpawnOrigin()),
+    });
+    if (!result.note) return;
+    saveState(result.state);
+    setState(result.state);
+    await openNoteWindow(result.note.id);
+  };
+
+  const handleNoteKeyDown = (event: KeyboardEvent) => {
+    const combo = keyCombo(event);
+    if (!combo) return;
+    const currentSettings = loadState().settings;
+    const current = note();
+
+    if (combo === currentSettings.copyNoteKeybind && current) {
+      if (hasActiveTextSelection(bodyRef)) return;
+      event.preventDefault();
+      void copyText(noteToMarkdown(current));
+      return;
+    }
+
+    if (combo === currentSettings.newNoteKeybind) {
+      event.preventDefault();
+      void createNoteFromShortcut();
+      return;
+    }
+
+    if (combo === currentSettings.hideNotesKeybind) {
+      event.preventDefault();
+      void hideAllNoteWindows();
+    }
+  };
+
   onMount(() => {
     configureNoteWindow(props.noteId);
     markCurrentNoteViewed(props.noteId, setState);
@@ -557,8 +600,10 @@ function NoteWindow(props: { noteId: string }) {
       }
     };
     channel?.addEventListener("message", onMessage);
+    window.addEventListener("keydown", handleNoteKeyDown);
     onCleanup(() => {
       channel?.removeEventListener("message", onMessage);
+      window.removeEventListener("keydown", handleNoteKeyDown);
       window.clearTimeout(noteDragTimer);
       window.clearTimeout(moveSaveTimer);
       movedUnlisten?.();
@@ -1048,7 +1093,7 @@ function SettingsPanel(props: { settings: Settings; onChange: (patch: Partial<Se
   const [editingTiming, setEditingTiming] = createSignal<ReminderMode | null>(null);
   const [periodicDraft, setPeriodicDraft] = createSignal("");
   const [timeOfDayDraft, setTimeOfDayDraft] = createSignal("");
-  const [capturingKeybind, setCapturingKeybind] = createSignal<"strike" | "scribble" | null>(null);
+  const [capturingKeybind, setCapturingKeybind] = createSignal<keyof Pick<Settings, "strikeKeybind" | "scribbleKeybind" | "copyNoteKeybind" | "newNoteKeybind" | "hideNotesKeybind"> | null>(null);
 
   const reset = (event: MouseEvent, patch: Partial<Settings>) => {
     event.preventDefault();
@@ -1115,7 +1160,7 @@ function SettingsPanel(props: { settings: Settings; onChange: (patch: Partial<Se
         <KeybindInput
           ariaLabel="Cross out keybind"
           value={props.settings.strikeKeybind}
-          onCapture={() => setCapturingKeybind("strike")}
+          onCapture={() => setCapturingKeybind("strikeKeybind")}
           onReset={(event) => reset(event, { strikeKeybind: DEFAULT_SETTINGS.strikeKeybind })}
         />
       </label>
@@ -1125,8 +1170,38 @@ function SettingsPanel(props: { settings: Settings; onChange: (patch: Partial<Se
         <KeybindInput
           ariaLabel="Scribble keybind"
           value={props.settings.scribbleKeybind}
-          onCapture={() => setCapturingKeybind("scribble")}
+          onCapture={() => setCapturingKeybind("scribbleKeybind")}
           onReset={(event) => reset(event, { scribbleKeybind: DEFAULT_SETTINGS.scribbleKeybind })}
+        />
+      </label>
+
+      <label class="setting-row">
+        <span>Copy note</span>
+        <KeybindInput
+          ariaLabel="Copy note keybind"
+          value={props.settings.copyNoteKeybind}
+          onCapture={() => setCapturingKeybind("copyNoteKeybind")}
+          onReset={(event) => reset(event, { copyNoteKeybind: DEFAULT_SETTINGS.copyNoteKeybind })}
+        />
+      </label>
+
+      <label class="setting-row">
+        <span>New note</span>
+        <KeybindInput
+          ariaLabel="New note keybind"
+          value={props.settings.newNoteKeybind}
+          onCapture={() => setCapturingKeybind("newNoteKeybind")}
+          onReset={(event) => reset(event, { newNoteKeybind: DEFAULT_SETTINGS.newNoteKeybind })}
+        />
+      </label>
+
+      <label class="setting-row">
+        <span>Hide notes</span>
+        <KeybindInput
+          ariaLabel="Hide notes keybind"
+          value={props.settings.hideNotesKeybind}
+          onCapture={() => setCapturingKeybind("hideNotesKeybind")}
+          onReset={(event) => reset(event, { hideNotesKeybind: DEFAULT_SETTINGS.hideNotesKeybind })}
         />
       </label>
 
@@ -1269,10 +1344,10 @@ function SettingsPanel(props: { settings: Settings; onChange: (patch: Partial<Se
       <Show when={capturingKeybind()}>
         {(target) => (
           <KeybindCapturePopover
-            label={target() === "strike" ? "Cross out" : "Scribble"}
+            label={keybindSettingLabel(target())}
             onCancel={() => setCapturingKeybind(null)}
             onCommit={(value) => {
-              props.onChange(target() === "strike" ? { strikeKeybind: value } : { scribbleKeybind: value });
+              props.onChange({ [target()]: value } as Partial<Settings>);
               setCapturingKeybind(null);
             }}
           />
@@ -1280,6 +1355,16 @@ function SettingsPanel(props: { settings: Settings; onChange: (patch: Partial<Se
       </Show>
     </div>
   );
+}
+
+function keybindSettingLabel(key: keyof Pick<Settings, "strikeKeybind" | "scribbleKeybind" | "copyNoteKeybind" | "newNoteKeybind" | "hideNotesKeybind">) {
+  return {
+    strikeKeybind: "Cross out",
+    scribbleKeybind: "Scribble",
+    copyNoteKeybind: "Copy note",
+    newNoteKeybind: "New note",
+    hideNotesKeybind: "Hide notes",
+  }[key];
 }
 
 function KeybindInput(props: {
@@ -1709,6 +1794,16 @@ async function closeAllNoteWindows() {
   }
 }
 
+async function hideAllNoteWindows() {
+  if (!isTauri()) return;
+  for (const noteWindow of await getAllWebviewWindows()) {
+    if (noteWindow.label.startsWith("note-")) {
+      await noteWindow.hide();
+    }
+  }
+  channel?.postMessage({ type: "notes-hidden" });
+}
+
 async function closeAuxiliaryWindows() {
   if (!isTauri()) return;
   for (const label of ["settings", "notes-list"]) {
@@ -1956,6 +2051,11 @@ function renderInlineMarkdown(value: string) {
 
 function safeMarkdownHref(href: string) {
   return /^(https?:|mailto:|#)/i.test(href) ? href : "#";
+}
+
+function hasActiveTextSelection(textarea: HTMLTextAreaElement | undefined) {
+  if (textarea && textarea.selectionStart !== textarea.selectionEnd) return true;
+  return Boolean(document.getSelection()?.toString());
 }
 
 function toggleCurrentTextareaLineStrike(textarea: HTMLTextAreaElement) {

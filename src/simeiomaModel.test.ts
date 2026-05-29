@@ -26,6 +26,12 @@ describe("Simeioma model", () => {
     expect(DEFAULT_SETTINGS.reminderTarget).toBe("attention");
   });
 
+  test("defaults note-level keybindings", () => {
+    expect(DEFAULT_SETTINGS.copyNoteKeybind).toBe("Ctrl + Shift + C");
+    expect(DEFAULT_SETTINGS.newNoteKeybind).toBe("Ctrl + N");
+    expect(DEFAULT_SETTINGS.hideNotesKeybind).toBe("Ctrl + Shift + H");
+  });
+
   test("formats periodic reminder values as short human labels", () => {
     expect(periodicLabel("0.5")).toBe("Every 30min");
     expect(periodicLabel("1")).toBe("Every 1h");

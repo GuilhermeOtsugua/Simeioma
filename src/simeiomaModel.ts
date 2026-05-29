@@ -29,6 +29,9 @@ export type Settings = {
   exportFormat: ExportFormat;
   strikeKeybind: string;
   scribbleKeybind: string;
+  copyNoteKeybind: string;
+  newNoteKeybind: string;
+  hideNotesKeybind: string;
   reminderMode: ReminderMode;
   reminderValue: string;
   reminderTarget: ReminderTarget;
@@ -86,6 +89,9 @@ export const DEFAULT_SETTINGS: Settings = {
   exportFormat: "markdown",
   strikeKeybind: "Ctrl + left click",
   scribbleKeybind: "Ctrl + right click",
+  copyNoteKeybind: "Ctrl + Shift + C",
+  newNoteKeybind: "Ctrl + N",
+  hideNotesKeybind: "Ctrl + Shift + H",
   reminderMode: "periodic",
   reminderValue: "1",
   reminderTarget: "attention",

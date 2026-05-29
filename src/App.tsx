@@ -928,29 +928,29 @@ function NoteWindow(props: { noteId: string }) {
                 </For>
               </div>
             </Show>
-          </section>
 
-          <canvas
-            ref={canvasRef}
-            class="sketch-canvas"
-            width="384"
-            height="384"
-            onPointerDown={(event) => startSketch(event, canvasRef, () => (drawing = true), (point) => (lastPoint = point))}
-            onPointerMove={(event) => {
-              if (!drawing || !canvasRef || !lastPoint) return;
-              lastPoint = drawSketch(event, canvasRef, lastPoint);
-            }}
-            onPointerUp={() => {
-              drawing = false;
-              lastPoint = null;
-              saveSketch();
-            }}
-            onPointerLeave={() => {
-              if (drawing) saveSketch();
-              drawing = false;
-              lastPoint = null;
-            }}
-          />
+            <canvas
+              ref={canvasRef}
+              class="sketch-canvas"
+              width="384"
+              height="384"
+              onPointerDown={(event) => startSketch(event, canvasRef, () => (drawing = true), (point) => (lastPoint = point))}
+              onPointerMove={(event) => {
+                if (!drawing || !canvasRef || !lastPoint) return;
+                lastPoint = drawSketch(event, canvasRef, lastPoint);
+              }}
+              onPointerUp={() => {
+                drawing = false;
+                lastPoint = null;
+                saveSketch();
+              }}
+              onPointerLeave={() => {
+                if (drawing) saveSketch();
+                drawing = false;
+                lastPoint = null;
+              }}
+            />
+          </section>
 
           <div
             class="note-resize-handle"

@@ -658,6 +658,8 @@ svg {
 }
 
 .note-columns {
+  position: relative;
+  z-index: 2;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;
@@ -922,6 +924,8 @@ svg {
 }
 
 .mention-row {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   gap: 5px;

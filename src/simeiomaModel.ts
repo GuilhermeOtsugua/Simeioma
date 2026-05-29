@@ -1,6 +1,7 @@
 export type ReminderMode = "periodic" | "timeOfDay";
 export type ReminderTarget = "all" | "important" | "tasks" | "attention";
 export type ExportFormat = "txt" | "markdown" | "png" | "jpeg";
+export type NoteLayout = "single" | "two-column";
 
 export type NoteLine = {
   id: string;
@@ -15,6 +16,8 @@ export type Note = {
   colorKey: string;
   important: boolean;
   lines: NoteLine[];
+  layout?: NoteLayout;
+  rightText?: string;
   sketchData?: string;
   createdAt: string;
   updatedAt: string;

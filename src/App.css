@@ -568,7 +568,7 @@ svg {
 .note-titlebar {
   position: relative;
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto auto auto;
   align-items: center;
   gap: 6px;
   padding: 8px 10px 3px;
@@ -655,6 +655,29 @@ svg {
   min-height: 0;
   overflow: auto;
   padding: 8px 10px 36px;
+}
+
+.note-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+.note-columns.is-two-column {
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  align-items: start;
+}
+
+.note-column {
+  min-width: 0;
+}
+
+.note-column-divider {
+  width: 1px;
+  min-height: 120px;
+  align-self: stretch;
+  background: color-mix(in srgb, var(--note-line), #000 8%);
+  opacity: 0.72;
 }
 
 .note-editor-stack {

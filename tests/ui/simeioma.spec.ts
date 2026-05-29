@@ -152,6 +152,20 @@ test("note body undo survives blurring to preview", async ({ page }) => {
   await expect(editor).toHaveValue("");
 });
 
+test("note can switch to two-column mode and store right text", async ({ page }) => {
+  await seedState(page, {
+    notes: [testNote({ id: "columns-note", lines: [{ id: "columns-line", text: "Left", task: false, crossed: false }] })],
+  });
+
+  await page.goto("/?role=note&id=columns-note");
+  await page.getByLabel("Toggle two-column note").click();
+  await page.getByLabel("Note right column").fill("Right side");
+
+  const note = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").notes[0], storageKey);
+  expect(note.layout).toBe("two-column");
+  expect(note.rightText).toBe("Right side");
+});
+
 test("focused note new-note keybinding creates another note", async ({ page }) => {
   await seedState(page, {
     notes: [testNote({ id: "shortcut-note", lines: [{ id: "shortcut-line", text: "body", task: false, crossed: false }] })],

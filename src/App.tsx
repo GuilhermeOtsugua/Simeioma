@@ -511,8 +511,10 @@ function NoteWindow(props: { noteId: string }) {
   const [paletteOpen, setPaletteOpen] = createSignal(false);
   const [scribble, setScribble] = createSignal(false);
   const [bodyFocused, setBodyFocused] = createSignal(true);
+  const [rightFocused, setRightFocused] = createSignal(false);
   let canvasRef: HTMLCanvasElement | undefined;
   let bodyRef: HTMLTextAreaElement | undefined;
+  let rightBodyRef: HTMLTextAreaElement | undefined;
   let drawing = false;
   let lastPoint: { x: number; y: number } | null = null;
   let noteDragTimer: number | undefined;
@@ -524,13 +526,22 @@ function NoteWindow(props: { noteId: string }) {
   const noteColor = createMemo(() => getColor(note()?.colorKey));
   const otherNotes = createMemo(() => state().notes.filter((item) => item.id !== props.noteId));
   const storedBodyText = createMemo(() => note()?.lines.map((line) => line.text).join("\n") ?? "");
+  const storedRightText = createMemo(() => note()?.rightText ?? "");
   const [bodyDraft, setBodyDraft] = createSignal("");
+  const [rightDraft, setRightDraft] = createSignal("");
   const bodyText = createMemo(() => bodyDraft());
+  const rightText = createMemo(() => rightDraft());
   const mentions = createMemo(() => collectMentions(note(), otherNotes()));
 
   createEffect(() => {
     if (document.activeElement !== bodyRef) {
       setBodyDraft(storedBodyText());
+    }
+  });
+
+  createEffect(() => {
+    if (document.activeElement !== rightBodyRef) {
+      setRightDraft(storedRightText());
     }
   });
 
@@ -695,6 +706,10 @@ function NoteWindow(props: { noteId: string }) {
     persistNoteBody(props.noteId, current.lines[0]?.id ?? createId(), rawText);
   };
 
+  const updateRightText = (rawText: string) => {
+    persistNoteRightText(props.noteId, rawText);
+  };
+
   const saveSketch = () => {
     if (!canvasRef) return;
     patchNote({ sketchData: canvasRef.toDataURL("image/png") });
@@ -707,10 +722,11 @@ function NoteWindow(props: { noteId: string }) {
   };
 
   const growBody = async () => {
-    if (!bodyRef) return;
-    bodyRef.style.height = "0px";
-    const nextHeight = Math.max(92, bodyRef.scrollHeight);
-    bodyRef.style.height = `${nextHeight}px`;
+    const editors = [bodyRef, rightBodyRef].filter(Boolean) as HTMLTextAreaElement[];
+    if (!editors.length) return;
+    for (const editor of editors) editor.style.height = "0px";
+    const nextHeight = Math.max(92, ...editors.map((editor) => editor.scrollHeight));
+    for (const editor of editors) editor.style.height = `${nextHeight}px`;
     if (!isTauri()) return;
     const desiredHeight = Math.min(620, NOTE_TITLE_HEIGHT + 24 + nextHeight);
     const currentSize = await getCurrentWindow().outerSize();
@@ -770,6 +786,15 @@ function NoteWindow(props: { noteId: string }) {
               {PencilIcon()}
             </button>
             <button
+              class="icon-button split-title-button"
+              classList={{ "is-important": item().layout === "two-column" }}
+              title="Toggle two-column note"
+              aria-label="Toggle two-column note"
+              onClick={() => patchNote({ layout: item().layout === "two-column" ? "single" : "two-column" })}
+            >
+              {SplitIcon()}
+            </button>
+            <button
               class="icon-button star-button"
               classList={{ "is-important": item().important }}
               title="Mark important"
@@ -809,47 +834,89 @@ function NoteWindow(props: { noteId: string }) {
 
           <div class="note-divider" />
 
-          <section class="note-body">
-            <div class="note-editor-stack" classList={{ "is-editing": bodyFocused() }}>
-              <div
-                class="note-body-preview"
-                onClick={() => {
-                  setBodyFocused(true);
-                  window.setTimeout(() => bodyRef?.focus(), 0);
-                }}
-              >
-                {renderMarkdownPreview(bodyText())}
+          <section class="note-body" classList={{ "is-two-column": item().layout === "two-column" }}>
+            <div class="note-columns" classList={{ "is-two-column": item().layout === "two-column" }}>
+              <div class="note-column">
+                <div class="note-editor-stack" classList={{ "is-editing": bodyFocused() }}>
+                  <div
+                    class="note-body-preview"
+                    onClick={() => {
+                      setBodyFocused(true);
+                      window.setTimeout(() => bodyRef?.focus(), 0);
+                    }}
+                  >
+                    {renderMarkdownPreview(bodyText())}
+                  </div>
+                  <textarea
+                    ref={bodyRef}
+                    class="note-body-editor"
+                    aria-label="Note line"
+                    data-line-id={item().lines[0]?.id ?? item().id}
+                    value={bodyText()}
+                    placeholder="Write..."
+                    spellcheck={false}
+                    onClick={(event) => {
+                      if (event.ctrlKey) {
+                        event.preventDefault();
+                        toggleCurrentTextareaLineStrike(event.currentTarget);
+                        setBodyDraft(event.currentTarget.value);
+                        updateBodyText(event.currentTarget.value);
+                      }
+                    }}
+                    onInput={(event) => {
+                      setBodyDraft(event.currentTarget.value);
+                      updateBodyText(event.currentTarget.value);
+                      growBody();
+                    }}
+                    onFocus={() => {
+                      setBodyFocused(true);
+                      growBody();
+                    }}
+                    onBlur={() => {
+                      syncAfterLineEdit();
+                      setBodyFocused(false);
+                    }}
+                  />
+                </div>
               </div>
-              <textarea
-                ref={bodyRef}
-                class="note-body-editor"
-                aria-label="Note line"
-                data-line-id={item().lines[0]?.id ?? item().id}
-                value={bodyText()}
-                placeholder="Write..."
-                spellcheck={false}
-                onClick={(event) => {
-                  if (event.ctrlKey) {
-                    event.preventDefault();
-                    toggleCurrentTextareaLineStrike(event.currentTarget);
-                    setBodyDraft(event.currentTarget.value);
-                    updateBodyText(event.currentTarget.value);
-                  }
-                }}
-                onInput={(event) => {
-                  setBodyDraft(event.currentTarget.value);
-                  updateBodyText(event.currentTarget.value);
-                  growBody();
-                }}
-                onFocus={() => {
-                  setBodyFocused(true);
-                  growBody();
-                }}
-                onBlur={() => {
-                  syncAfterLineEdit();
-                  setBodyFocused(false);
-                }}
-              />
+
+              <Show when={item().layout === "two-column"}>
+                <div class="note-column-divider" aria-hidden="true" />
+                <div class="note-column">
+                  <div class="note-editor-stack" classList={{ "is-editing": rightFocused() }}>
+                    <div
+                      class="note-body-preview"
+                      onClick={() => {
+                        setRightFocused(true);
+                        window.setTimeout(() => rightBodyRef?.focus(), 0);
+                      }}
+                    >
+                      {renderMarkdownPreview(rightText())}
+                    </div>
+                    <textarea
+                      ref={rightBodyRef}
+                      class="note-body-editor"
+                      aria-label="Note right column"
+                      value={rightText()}
+                      placeholder="Write..."
+                      spellcheck={false}
+                      onInput={(event) => {
+                        setRightDraft(event.currentTarget.value);
+                        updateRightText(event.currentTarget.value);
+                        growBody();
+                      }}
+                      onFocus={() => {
+                        setRightFocused(true);
+                        growBody();
+                      }}
+                      onBlur={() => {
+                        syncAfterLineEdit();
+                        setRightFocused(false);
+                      }}
+                    />
+                  </div>
+                </div>
+              </Show>
             </div>
 
             <Show when={mentions().length}>
@@ -1520,6 +1587,23 @@ function persistNoteBody(noteId: string, lineId: string, text: string) {
   saveState(next, { broadcast: false });
 }
 
+function persistNoteRightText(noteId: string, rightText: string) {
+  const latest = loadState();
+  const next = {
+    ...latest,
+    notes: latest.notes.map((note) =>
+      note.id === noteId
+        ? {
+            ...note,
+            rightText,
+            updatedAt: new Date().toISOString(),
+          }
+        : note,
+    ),
+  };
+  saveState(next, { broadcast: false });
+}
+
 async function ensureDefaultExportPath(setState: (state: AppState) => void) {
   if (!isTauri()) return;
   const latest = loadState();
@@ -1903,7 +1987,7 @@ function focusFirstLine() {
 
 function collectMentions(note: Note | undefined, candidates: Note[]) {
   if (!note) return [];
-  const body = note.lines.map((line) => line.text).join(" ");
+  const body = `${note.lines.map((line) => line.text).join(" ")} ${note.rightText ?? ""}`;
   const tokens = Array.from(body.matchAll(/@([a-z0-9-]+)/gi)).map((match) => match[1].toLowerCase());
   if (!tokens.length) return [];
   return candidates.filter((candidate) => tokens.includes(slug(noteLabelText(candidate)).toLowerCase()));
@@ -1916,7 +2000,11 @@ function noteToMarkdown(note: Note) {
     const text = line.crossed && !line.task ? `~~${line.text}~~` : line.text;
     return `${box}${text}`;
   });
-  return `# ${title}\n\n${lines.join("\n")}\n`;
+  const left = lines.join("\n");
+  if (note.layout === "two-column") {
+    return `# ${title}\n\n## Left\n\n${left}\n\n## Right\n\n${note.rightText ?? ""}\n`;
+  }
+  return `# ${title}\n\n${left}\n`;
 }
 
 type MarkdownBlock =
@@ -2078,7 +2166,11 @@ function notesToText(notes: Note[]) {
   return notes
     .map((note) => {
       const lines = note.lines.map((line) => `${line.crossed ? "[done] " : ""}${line.text}`);
-      return `${noteLabelText(note)}\n${lines.join("\n")}`;
+      const left = lines.join("\n");
+      if (note.layout === "two-column") {
+        return `${noteLabelText(note)}\nLeft:\n${left}\n\nRight:\n${note.rightText ?? ""}`;
+      }
+      return `${noteLabelText(note)}\n${left}`;
     })
     .join("\n\n---\n\n");
 }
@@ -2331,6 +2423,15 @@ function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="m7 7 10 10M17 7 7 17" />
+    </svg>
+  );
+}
+
+function SplitIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 5v14" />
+      <path d="M5 7h5M14 7h5M5 12h5M14 12h5M5 17h5M14 17h5" />
     </svg>
   );
 }

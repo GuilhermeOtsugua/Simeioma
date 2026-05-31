@@ -20,6 +20,74 @@ fn save_binary_file(directory: String, filename: String, bytes: Vec<u8>) -> Resu
     Ok(path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn is_left_mouse_down() -> bool {
+    left_mouse_down()
+}
+
+#[tauri::command]
+fn read_clipboard_text() -> Result<String, String> {
+    read_clipboard_text_native()
+}
+
+#[tauri::command]
+fn write_clipboard_text(text: String) -> Result<(), String> {
+    arboard::Clipboard::new()
+        .and_then(|mut clipboard| clipboard.set_text(text))
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn read_clipboard_text_native() -> Result<String, String> {
+    use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
+
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
+            return Err("Could not open clipboard.".to_string());
+        }
+        let handle = GetClipboardData(CF_UNICODETEXT as u32);
+        if handle.is_null() {
+            CloseClipboard();
+            return Ok(String::new());
+        }
+        let pointer = GlobalLock(handle);
+        if pointer.is_null() {
+            CloseClipboard();
+            return Err("Could not lock clipboard text.".to_string());
+        }
+        let mut length = 0usize;
+        let text_pointer = pointer as *const u16;
+        while *text_pointer.add(length) != 0 {
+            length += 1;
+        }
+        let text = String::from_utf16_lossy(std::slice::from_raw_parts(text_pointer, length));
+        GlobalUnlock(handle);
+        CloseClipboard();
+        Ok(text)
+    }
+}
+
+#[cfg(not(windows))]
+fn read_clipboard_text_native() -> Result<String, String> {
+    arboard::Clipboard::new()
+        .and_then(|mut clipboard| clipboard.get_text())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn left_mouse_down() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
+
+    unsafe { (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000) != 0 }
+}
+
+#[cfg(not(windows))]
+fn left_mouse_down() -> bool {
+    false
+}
+
 fn export_path(directory: String, filename: String) -> Result<std::path::PathBuf, String> {
     let directory = std::path::PathBuf::from(directory);
 
@@ -54,7 +122,7 @@ pub fn run() {
             setup_tray(app)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![save_text_file, save_binary_file])
+        .invoke_handler(tauri::generate_handler![save_text_file, save_binary_file, is_left_mouse_down, read_clipboard_text, write_clipboard_text])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

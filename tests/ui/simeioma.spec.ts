@@ -111,7 +111,7 @@ test("note body accepts continuous typing without losing focus", async ({ page }
   const editor = page.getByLabel("Note line").first();
   await editor.fill("Review the client brief");
 
-  await expect(editor).toHaveValue("Review the client brief");
+  await expect(editor).toHaveText("Review the client brief");
   const note = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").notes[0], storageKey);
   expect(note.lines[0].text).toBe("Review the client brief");
 });
@@ -130,7 +130,7 @@ test("normal body typing keeps focus after each character", async ({ page }) => 
     await expect(editor).toBeFocused();
   }
 
-  await expect(editor).toHaveValue("abc");
+  await expect(editor).toHaveText("abc");
 });
 
 test("note body undo survives blurring to preview", async ({ page }) => {
@@ -149,7 +149,7 @@ test("note body undo survives blurring to preview", async ({ page }) => {
     await page.keyboard.press("Control+Z");
   }
 
-  await expect(editor).toHaveValue("");
+  await expect(editor).toHaveText("");
 });
 
 test("note can switch to two-column mode and store right text", async ({ page }) => {

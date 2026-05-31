@@ -107,6 +107,10 @@ svg {
 
 .launcher-shell:hover .launcher-strip {
   width: 18px;
+  transform: translate(-50%, -50%) scale(1.08);
+}
+
+.launcher-shell:hover .launcher-strip.is-menu {
   transform: translate(-50%, -50%);
 }
 
@@ -123,7 +127,6 @@ svg {
 
 .exit-confirmation {
   position: absolute;
-  left: calc(50% - 100px);
   top: 50%;
   width: 136px;
   padding: 10px;
@@ -132,6 +135,14 @@ svg {
   background: color-mix(in srgb, var(--strip-color), white 44%);
   color: #242019;
   transform: translateY(-50%);
+}
+
+.exit-confirmation.confirm-left {
+  right: calc(50% + 30px);
+}
+
+.exit-confirmation.confirm-right {
+  left: calc(50% + 30px);
 }
 
 .surface-popover {
@@ -511,10 +522,17 @@ svg {
   color: #fffaf0;
 }
 
+.reminder-popup-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+}
+
 .reminder-toast {
   position: absolute;
   left: 50%;
-  top: calc(50% - 65px);
+  top: 50%;
   width: 18px;
   height: 18px;
   display: grid;
@@ -526,7 +544,7 @@ svg {
   box-shadow: none;
   border: 0;
   border-radius: 999px;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   z-index: 10;
 }
 
@@ -568,7 +586,7 @@ svg {
 .note-titlebar {
   position: relative;
   display: grid;
-  grid-template-columns: 1fr auto auto auto auto;
+  grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 6px;
   padding: 8px 10px 3px;
@@ -620,16 +638,6 @@ svg {
   border-color: color-mix(in srgb, var(--note-ink), transparent 54%);
 }
 
-.note-close-button {
-  color: #a82121;
-  border-color: rgba(168, 33, 33, 0.34);
-}
-
-.note-close-button:hover,
-.note-close-button:focus-visible {
-  background: rgba(168, 33, 33, 0.1);
-  border-color: rgba(168, 33, 33, 0.48);
-}
 
 .note-divider {
   align-self: center;
@@ -653,7 +661,8 @@ svg {
   position: relative;
   z-index: 2;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 8px 10px 36px;
 }
 
@@ -672,6 +681,7 @@ svg {
 
 .note-column {
   min-width: 0;
+  max-width: 100%;
 }
 
 .note-column-divider {
@@ -684,7 +694,9 @@ svg {
 
 .note-editor-stack {
   position: relative;
-  min-height: 92px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 24px;
 }
 
 .note-editor-stack .note-body-preview {
@@ -703,9 +715,12 @@ svg {
 }
 
 .note-body-editor {
+  box-sizing: border-box;
   width: 100%;
-  min-height: 92px;
-  height: 100%;
+  max-width: 100%;
+  min-height: 22px;
+  height: auto;
+  padding-right: 1ch;
   border: 0;
   background: transparent;
   color: inherit;
@@ -714,17 +729,26 @@ svg {
   line-height: 1.45;
   outline: none;
   resize: none;
-  overflow: hidden;
+  overflow-y: hidden;
+  overflow-x: hidden;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
-.note-body-editor::placeholder {
+.note-body-editor:empty::before {
+  content: attr(data-placeholder);
   color: color-mix(in srgb, var(--note-ink), transparent 62%);
+  pointer-events: none;
 }
 
 .note-body-preview {
-  min-height: 92px;
+  max-width: 100%;
+  min-height: 22px;
+  padding-right: 1ch;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   font-size: 13px;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -779,7 +803,11 @@ svg {
 .note-body-preview .preview-code-block {
   margin: 4px 0 7px;
   padding: 7px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   border-radius: 8px;
   background: color-mix(in srgb, var(--note-bg), #000 7%);
   font-size: 12px;
@@ -812,8 +840,13 @@ svg {
   background: color-mix(in srgb, var(--note-bg), #000 7%);
 }
 
+.note-body-preview.is-empty {
+  user-select: none;
+}
+
 .placeholder-line {
   color: color-mix(in srgb, var(--note-ink), transparent 62%);
+  user-select: none;
 }
 
 .preview-task {
@@ -947,19 +980,86 @@ svg {
   right: 8px;
   z-index: 6;
   display: grid;
-  grid-template-columns: repeat(4, 18px);
-  gap: 5px;
+  gap: 8px;
   padding: 7px;
   border-radius: 13px;
   background: rgba(255, 255, 255, 0.72);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
 }
 
-.color-popover button {
+.color-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 18px);
+  gap: 5px;
+}
+
+.color-popover .color-swatch {
   width: 18px;
   height: 18px;
   border: 1px solid rgba(35, 30, 22, 0.14);
   border-radius: 999px;
+}
+
+.note-menu-action {
+  min-height: 26px;
+  border: 1px solid rgba(42, 35, 23, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.42);
+  color: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.note-menu-action.close-action {
+  color: #a82121;
+  border-color: rgba(168, 33, 33, 0.34);
+}
+
+.note-menu-action:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.text-menu-popup-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+}
+
+.text-context-menu {
+  position: absolute;
+  top: 0;
+  right: auto;
+  left: 0;
+  z-index: 30;
+  min-width: 132px;
+  background: #f9f6e8;
+  opacity: 1;
+}
+
+.text-context-menu .note-menu-action {
+  width: 100%;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.text-menu-label {
+  padding: 2px 4px 0;
+  color: rgba(35, 30, 22, 0.58);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.text-direction-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
+
+.text-direction-row .note-menu-action {
+  padding: 0 7px;
+  text-align: center;
 }
 
 .sketch-canvas {

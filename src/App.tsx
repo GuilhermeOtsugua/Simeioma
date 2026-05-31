@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { emitTo } from "@tauri-apps/api/event";
 import { documentDir } from "@tauri-apps/api/path";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -43,6 +44,7 @@ import {
   type ReminderNotice,
   type ReminderTarget,
   type Settings,
+  type SketchStrokeRecord,
 } from "./simeiomaModel";
 import "./App.css";
 
@@ -50,10 +52,12 @@ const STORAGE_KEY = "simeioma:v1";
 const CHANNEL_NAME = "simeioma-sync";
 const STRIP_VISIBLE_WIDTH = 3;
 const HOLD_TO_DRAG_MS = 0;
-const LAUNCHER_CANVAS_WIDTH = 208;
-const LAUNCHER_CANVAS_HEIGHT = 244;
-const LAUNCHER_IDLE_CANVAS_WIDTH = 26;
-const LAUNCHER_IDLE_CANVAS_HEIGHT = 104;
+const LAUNCHER_CANVAS_WIDTH = 64;
+const LAUNCHER_CANVAS_HEIGHT = 204;
+const LAUNCHER_CONFIRM_CANVAS_WIDTH = 360;
+const LAUNCHER_CONFIRM_CANVAS_HEIGHT = 204;
+const LAUNCHER_IDLE_CANVAS_WIDTH = 30;
+const LAUNCHER_IDLE_CANVAS_HEIGHT = 112;
 const LAUNCHER_SCREEN_MARGIN = 12;
 
 const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(CHANNEL_NAME) : null;
@@ -81,6 +85,14 @@ function App() {
     return <NotesListWindow />;
   }
 
+  if (role === "reminder") {
+    return <ReminderPopupWindow />;
+  }
+
+  if (role === "text-menu") {
+    return <TextMenuPopupWindow />;
+  }
+
   return <LauncherWindow />;
 }
 
@@ -91,6 +103,7 @@ function LauncherWindow() {
   const [notesHidden, setNotesHidden] = createSignal(false);
   const [notice, setNotice] = createSignal<ReminderNotice | null>(null);
   const [confirmingExit, setConfirmingExit] = createSignal(false);
+  const [confirmSide, setConfirmSide] = createSignal<"left" | "right">("left");
   const currentColor = createMemo(() => NOTE_COLORS[state().launcher.colorIndex % NOTE_COLORS.length]);
   let dragTimer: number | undefined;
   let dragStarted = false;
@@ -133,11 +146,11 @@ function LauncherWindow() {
         }
       });
       getCurrentWindow().onMoved(() => {
-        if (launcherIsConfiguring || launcherUserDragging) return;
+        if (launcherIsConfiguring) return;
         window.clearTimeout(moveSaveTimer);
-        moveSaveTimer = window.setTimeout(async () => {
-          if (launcherIsConfiguring || launcherUserDragging) return;
-          launcherAnchor = await readWindowAnchor();
+        if (launcherUserDragging) return;
+        moveSaveTimer = window.setTimeout(() => {
+          void settleLauncherPosition();
         }, 80);
       }).then((unlisten) => {
         movedUnlisten = unlisten;
@@ -155,9 +168,10 @@ function LauncherWindow() {
   });
 
   createEffect(() => {
+    if (launcherUserDragging) return;
     configureLauncherWindow(
       menuOpen(),
-      hovered(),
+      false,
       confirmingExit(),
       launcherAnchor,
       (anchor) => (launcherAnchor = anchor),
@@ -166,6 +180,7 @@ function LauncherWindow() {
 
   createEffect(() => {
     if (confirmingExit()) {
+      void updateConfirmSide(setConfirmSide);
       window.setTimeout(() => confirmButtonRef?.focus(), 0);
     }
   });
@@ -197,6 +212,13 @@ function LauncherWindow() {
     const contents = format === "txt" ? notesToText(latest.notes) : notesToMarkdown(latest.notes);
     await saveTextExport(latest.settings, filename, contents);
   };
+
+  createEffect(() => {
+    const current = notice();
+    if (current?.noteIds.length) {
+      void openReminderPopupWindow(current.noteIds);
+    }
+  });
 
   const matchingNoticeNotes = createMemo(() =>
     notice() ? state().notes.filter((note) => notice()!.noteIds.includes(note.id)) : [],
@@ -233,16 +255,38 @@ function LauncherWindow() {
     if (!isTauri()) return;
     dragStarted = true;
     launcherUserDragging = true;
-    getCurrentWindow().startDragging();
+    void getCurrentWindow().startDragging().then(
+      () => {
+        launcherUserDragging = false;
+        settleLauncherDrag();
+      },
+      () => {
+        launcherUserDragging = false;
+      },
+    );
+  };
+
+  const settleLauncherPosition = async () => {
+    if (launcherIsConfiguring) return;
+    if (await isLeftMouseDown()) {
+      settleLauncherDrag();
+      return;
+    }
+    const parking = launcherParkingSize();
+    for (let pass = 0; pass < 3; pass += 1) {
+      const moved = await clampCurrentLauncherToWorkArea(parking.width, parking.height, LAUNCHER_SCREEN_MARGIN);
+      if (!moved) break;
+      await sleep(30);
+    }
+    launcherAnchor = await readWindowAnchor();
+    launcherUserDragging = false;
   };
 
   const settleLauncherDrag = () => {
     window.clearTimeout(settleDragTimer);
-    settleDragTimer = window.setTimeout(async () => {
-      await clampCurrentWindowToWorkArea(LAUNCHER_SCREEN_MARGIN);
-      launcherAnchor = await readWindowAnchor();
-      launcherUserDragging = false;
-    }, 260);
+    settleDragTimer = window.setTimeout(() => {
+      void settleLauncherPosition();
+    }, 100);
   };
 
   const createNoteFromLauncher = () => {
@@ -264,26 +308,6 @@ function LauncherWindow() {
       onMouseLeave={() => setHovered(false)}
       style={{ "--strip-color": currentColor().bg, "--strip-line": currentColor().line }}
     >
-      <Show when={notice()}>
-        {(item) => (
-          <button
-            class="reminder-toast"
-            type="button"
-            onClick={() => {
-              const matches = matchingNoticeNotes();
-              if (matches.length === 1) {
-                openNoteWindow(matches[0].id);
-              } else {
-                setMenuOpen(true);
-              }
-              setNotice(null);
-            }}
-          >
-            <span>{item().noteIds.length}</span>
-          </button>
-        )}
-      </Show>
-
       <section
         class="launcher-strip"
         classList={{ "is-menu": menuOpen() }}
@@ -338,13 +362,13 @@ function LauncherWindow() {
           pointerDownAt = null;
           pointerMovedTooFar = false;
           suppressNextLauncherClick = false;
-          if (dragStarted) settleLauncherDrag();
+          if (!dragStarted) launcherUserDragging = false;
         }}
         onLostPointerCapture={() => {
           window.clearTimeout(dragTimer);
           pointerDownAt = null;
           pointerMovedTooFar = false;
-          if (dragStarted) settleLauncherDrag();
+          if (!dragStarted) launcherUserDragging = false;
         }}
         onClick={(event) => {
           event.preventDefault();
@@ -385,6 +409,7 @@ function LauncherWindow() {
       <Show when={confirmingExit()}>
         <section
           class="exit-confirmation"
+          classList={{ "confirm-left": confirmSide() === "left", "confirm-right": confirmSide() === "right" }}
           role="dialog"
           aria-label="Confirm exit"
           tabIndex={-1}
@@ -415,6 +440,35 @@ function LauncherWindow() {
           </div>
         </section>
       </Show>
+    </main>
+  );
+}
+
+function ReminderPopupWindow() {
+  const params = new URLSearchParams(window.location.search);
+  const noteIds = (params.get("noteIds") ?? "").split(",").filter(Boolean);
+
+  onMount(() => {
+    configureReminderPopupWindow();
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === "note-focused" && noteIds.includes(event.data.noteId)) {
+        closeCurrentWindow();
+      }
+    };
+    channel?.addEventListener("message", onMessage);
+    onCleanup(() => channel?.removeEventListener("message", onMessage));
+  });
+
+  const focusRelatedNotes = async () => {
+    for (const id of noteIds) await openNoteWindow(id);
+    await closeCurrentWindow();
+  };
+
+  return (
+    <main class="reminder-popup-shell">
+      <button class="reminder-toast" type="button" onClick={focusRelatedNotes}>
+        <span>{noteIds.length}</span>
+      </button>
     </main>
   );
 }
@@ -517,13 +571,15 @@ function NoteWindow(props: { noteId: string }) {
   const [bodyFocused, setBodyFocused] = createSignal(true);
   const [rightFocused, setRightFocused] = createSignal(false);
   let canvasRef: HTMLCanvasElement | undefined;
-  let bodyRef: HTMLTextAreaElement | undefined;
-  let rightBodyRef: HTMLTextAreaElement | undefined;
+  let bodyRef: HTMLDivElement | undefined;
+  let rightBodyRef: HTMLDivElement | undefined;
   let activeStroke: SketchStroke | null = null;
   let noteDragTimer: number | undefined;
   let notePointerDownAt: { x: number; y: number } | null = null;
   let resizingNote = false;
   let resizeStart: { x: number; y: number; width: number; height: number } | null = null;
+  let bodySelectionRange: Range | null = null;
+  let rightSelectionRange: Range | null = null;
 
   const note = createMemo(() => state().notes.find((item) => item.id === props.noteId));
   const noteColor = createMemo(() => getColor(note()?.colorKey));
@@ -535,16 +591,21 @@ function NoteWindow(props: { noteId: string }) {
   const bodyText = createMemo(() => bodyDraft());
   const rightText = createMemo(() => rightDraft());
   const mentions = createMemo(() => collectMentions(note(), otherNotes()));
+  const itemLayoutIsTwoColumn = createMemo(() => note()?.layout === "two-column");
 
   createEffect(() => {
     if (document.activeElement !== bodyRef) {
-      setBodyDraft(storedBodyText());
+      const text = storedBodyText();
+      setBodyDraft(text);
+      syncEditableText(bodyRef, text);
     }
   });
 
   createEffect(() => {
     if (document.activeElement !== rightBodyRef) {
-      setRightDraft(storedRightText());
+      const text = storedRightText();
+      setRightDraft(text);
+      syncEditableText(rightBodyRef, text);
     }
   });
 
@@ -582,6 +643,18 @@ function NoteWindow(props: { noteId: string }) {
       return;
     }
 
+    if (combo === "Ctrl + Z" && current?.sketchStrokes?.length && document.activeElement !== bodyRef && document.activeElement !== rightBodyRef) {
+      event.preventDefault();
+      patchNote({ sketchStrokes: current.sketchStrokes.slice(0, -1), sketchData: undefined });
+      return;
+    }
+
+    if (combo === "Ctrl + Shift + Z" && (current?.sketchStrokes?.length || current?.sketchData)) {
+      event.preventDefault();
+      patchNote({ sketchStrokes: [], sketchData: undefined });
+      return;
+    }
+
     if (combo === currentSettings.hideNotesKeybind) {
       event.preventDefault();
       void hideAllNoteWindows();
@@ -594,9 +667,27 @@ function NoteWindow(props: { noteId: string }) {
     focusFirstLine();
     hydrateCanvas();
     let movedUnlisten: (() => void) | undefined;
+    let resizedUnlisten: (() => void) | undefined;
+    let focusUnlisten: (() => void) | undefined;
+    let textCommandUnlisten: (() => void) | undefined;
     let moveSaveTimer: number | undefined;
+    let sizeSaveTimer: number | undefined;
 
     if (isTauri()) {
+      getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+        if (focused) channel?.postMessage({ type: "note-focused", noteId: props.noteId });
+        if (!focused) {
+          setPaletteOpen(false);
+          channel?.postMessage({ type: "dismiss-text-menu" });
+        }
+      }).then((unlisten) => {
+        focusUnlisten = unlisten;
+      });
+      getCurrentWindow().listen<{ field: string; command: string; text?: string; start?: number; end?: number }>("text-menu-command", ({ payload }) => {
+        void applyTextMenuCommand(payload.field, payload.command, payload.text, payload.start, payload.end);
+      }).then((unlisten) => {
+        textCommandUnlisten = unlisten;
+      });
       getCurrentWindow().onMoved(({ payload }) => {
         window.clearTimeout(moveSaveTimer);
         moveSaveTimer = window.setTimeout(async () => {
@@ -606,29 +697,49 @@ function NoteWindow(props: { noteId: string }) {
       }).then((unlisten) => {
         movedUnlisten = unlisten;
       });
+      getCurrentWindow().onResized(({ payload }) => {
+        window.clearTimeout(sizeSaveTimer);
+        sizeSaveTimer = window.setTimeout(async () => {
+          const scale = (await primaryMonitor())?.scaleFactor || 1;
+          persistNoteSize(props.noteId, { width: payload.width / scale, height: payload.height / scale }, setState);
+        }, 80);
+      }).then((unlisten) => {
+        resizedUnlisten = unlisten;
+      });
     }
 
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type === "state") {
         setState(loadState());
       }
+
+    };
+    const closePaletteOnOutsidePointer = (event: PointerEvent) => {
+      if (event.button === 0) channel?.postMessage({ type: "dismiss-text-menu" });
+      const target = event.target as HTMLElement;
+      if (paletteOpen() && !target.closest(".note-titlebar, .note-context-menu")) setPaletteOpen(false);
     };
     channel?.addEventListener("message", onMessage);
     window.addEventListener("keydown", handleNoteKeyDown);
+    window.addEventListener("pointerdown", closePaletteOnOutsidePointer, true);
     onCleanup(() => {
       channel?.removeEventListener("message", onMessage);
       window.removeEventListener("keydown", handleNoteKeyDown);
+      window.removeEventListener("pointerdown", closePaletteOnOutsidePointer, true);
       window.clearTimeout(noteDragTimer);
       window.clearTimeout(moveSaveTimer);
+      window.clearTimeout(sizeSaveTimer);
       movedUnlisten?.();
+      resizedUnlisten?.();
+      focusUnlisten?.();
+      textCommandUnlisten?.();
     });
   });
 
   const startNoteDrag = (event: PointerEvent) => {
     if (!isTauri() || event.button !== 0 || scribble()) return;
     if (event.ctrlKey) return;
-    const target = event.target as HTMLElement;
-    if (target.closest("button, input, select, textarea, .note-body, .color-popover, .mention-row")) return;
+    if (shouldBlockNoteDrag(event)) return;
     window.clearTimeout(noteDragTimer);
     notePointerDownAt = { x: event.clientX, y: event.clientY };
     if (HOLD_TO_DRAG_MS > 0) {
@@ -643,6 +754,93 @@ function NoteWindow(props: { noteId: string }) {
       notePointerDownAt = null;
       getCurrentWindow().startDragging();
     }
+  };
+
+  const editorForField = (field: string) => field === "right" ? rightBodyRef : bodyRef;
+
+  const syncEditorValue = (field: string, editor: HTMLElement) => {
+    const text = editablePlainText(editor);
+    if (field === "right") {
+      setRightDraft(text);
+      updateRightText(text);
+    } else {
+      setBodyDraft(text);
+      updateBodyText(text);
+    }
+    growBody();
+  };
+
+  const storeEditorRange = (field: string, range: Range) => {
+    if (field === "right") rightSelectionRange = range.cloneRange();
+    else bodySelectionRange = range.cloneRange();
+  };
+
+  const storedEditorRange = (field: string) => {
+    const range = field === "right" ? rightSelectionRange : bodySelectionRange;
+    return range?.cloneRange() ?? null;
+  };
+
+  const applyTextMenuCommand = async (field: string, command: string, payloadText = "") => {
+    const target = editorForField(field);
+    if (!target) return;
+    const range = storedEditorRange(field) ?? currentEditorRange(target) ?? collapsedEditorEndRange(target);
+    selectEditorRange(range);
+    if (command === "paste") {
+      const text = payloadText || await readClipboardText();
+      range.deleteContents();
+      const inserted = document.createTextNode(text);
+      range.insertNode(inserted);
+      range.setStartAfter(inserted);
+      range.collapse(true);
+      storeEditorRange(field, range);
+      selectEditorRange(range);
+      syncEditorValue(field, target);
+      return;
+    }
+    if (command === "cut") {
+      const selected = range.toString();
+      if (!selected) return;
+      await copyText(selected);
+      range.deleteContents();
+      range.collapse(true);
+      storeEditorRange(field, range);
+      selectEditorRange(range);
+      syncEditorValue(field, target);
+      return;
+    }
+    if (command === "copy") {
+      const selected = range.toString();
+      if (selected) await copyText(selected);
+      return;
+    }
+    if (command === "select-all") {
+      const next = document.createRange();
+      next.selectNodeContents(target);
+      storeEditorRange(field, next);
+      selectEditorRange(next);
+      return;
+    }
+    if (command === "dir-ltr" || command === "dir-rtl") {
+      target.dir = command.replace("dir-", "") as "ltr" | "rtl";
+    }
+  };
+
+  const rememberTextSelection = (field: "body" | "right") => {
+    const target = editorForField(field);
+    const range = target ? currentEditorRange(target) : null;
+    if (range) storeEditorRange(field, range);
+  };
+
+  const openTextMenu = (event: MouseEvent, field: "body" | "right", directEditor = true) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const target = editorForField(field);
+    if (!target) return;
+    const range = directEditor ? currentEditorRange(target) ?? collapsedEditorEndRange(target) : collapsedEditorEndRange(target);
+    if (!directEditor) target.focus();
+    storeEditorRange(field, range);
+    selectEditorRange(range);
+    void openTextMenuPopupWindow(props.noteId, field, event.clientX, event.clientY, !range.collapsed, 0, 0);
   };
 
   const startNoteResize = async (event: PointerEvent) => {
@@ -684,6 +882,7 @@ function NoteWindow(props: { noteId: string }) {
 
   createEffect(() => {
     note()?.sketchData;
+    note()?.sketchStrokes;
     hydrateCanvas();
   });
 
@@ -713,9 +912,9 @@ function NoteWindow(props: { noteId: string }) {
     persistNoteRightText(props.noteId, rawText);
   };
 
-  const saveSketch = () => {
-    if (!canvasRef) return;
-    patchNote({ sketchData: canvasRef.toDataURL("image/png") });
+  const saveSketchStroke = (stroke: SketchStrokeRecord) => {
+    const current = note();
+    patchNote({ sketchStrokes: [...(current?.sketchStrokes ?? []), stroke] });
   };
 
   const syncAfterLineEdit = () => {
@@ -725,11 +924,15 @@ function NoteWindow(props: { noteId: string }) {
   };
 
   const growBody = async () => {
-    const editors = [bodyRef, rightBodyRef].filter(Boolean) as HTMLTextAreaElement[];
-    if (!editors.length) return;
-    for (const editor of editors) editor.style.height = "0px";
-    const nextHeight = Math.max(92, ...editors.map((editor) => editor.scrollHeight));
-    for (const editor of editors) editor.style.height = `${nextHeight}px`;
+    const visibleEditors = [bodyRef, itemLayoutIsTwoColumn() ? rightBodyRef : undefined].filter(Boolean) as HTMLDivElement[];
+    if (!visibleEditors.length) return;
+    let nextHeight = 0;
+    for (const editor of visibleEditors) {
+      editor.style.height = "auto";
+      const height = Math.max(22, editor.scrollHeight);
+      editor.style.height = `${height}px`;
+      nextHeight = Math.max(nextHeight, height);
+    }
     if (!isTauri()) return;
     const desiredHeight = Math.min(620, NOTE_TITLE_HEIGHT + 24 + nextHeight);
     const currentSize = await getCurrentWindow().outerSize();
@@ -751,9 +954,16 @@ function NoteWindow(props: { noteId: string }) {
             "--note-line": noteColor().line,
           }}
           onContextMenu={(event) => {
-            if (event.ctrlKey) {
-              event.preventDefault();
+            event.preventDefault();
+            if (matchesCombo(pointerCombo(event), loadState().settings.scribbleKeybind)) {
               setScribble(!scribble());
+              return;
+            }
+            const target = event.target as HTMLElement;
+            if (target.closest(".note-titlebar, button, input, select, .note-context-menu, .note-resize-handle")) return;
+            if (!target.closest(".note-body-editor")) {
+              const field = target.closest(".note-column")?.querySelector('[aria-label="Note right column"]') ? "right" : "body";
+              openTextMenu(event, field, false);
             }
           }}
           onPointerDown={startNoteDrag}
@@ -771,6 +981,10 @@ function NoteWindow(props: { noteId: string }) {
             class="note-titlebar"
             onContextMenu={(event) => {
               event.preventDefault();
+              if (matchesCombo(pointerCombo(event), loadState().settings.scribbleKeybind)) {
+                setScribble(!scribble());
+                return;
+              }
               setPaletteOpen(!paletteOpen());
             }}
           >
@@ -780,14 +994,6 @@ function NoteWindow(props: { noteId: string }) {
               placeholder="Untitled"
               onInput={(event) => patchNote({ title: event.currentTarget.value })}
             />
-            <button
-              class="icon-button scribble-title-button"
-              classList={{ "is-important": scribble() }}
-              title="Toggle scribble mode"
-              onClick={() => setScribble(!scribble())}
-            >
-              {PencilIcon()}
-            </button>
             <button
               class="icon-button split-title-button"
               classList={{ "is-important": item().layout === "two-column" }}
@@ -805,32 +1011,30 @@ function NoteWindow(props: { noteId: string }) {
             >
               {StarIcon()}
             </button>
-            <button
-              class="icon-button note-close-button close-action"
-              title="Close note"
-              aria-label="Close note"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation();
-                closeCurrentWindow();
-              }}
-            >
-              {CloseIcon()}
-            </button>
             <Show when={paletteOpen()}>
-              <div class="color-popover">
-                <For each={NOTE_COLORS}>
-                  {(color) => (
-                    <button
-                      title={color.name}
-                      style={{ "background-color": color.bg }}
-                      onClick={() => {
-                        patchNote({ colorKey: color.key });
-                        setPaletteOpen(false);
-                      }}
-                    />
-                  )}
-                </For>
+              <div class="color-popover note-context-menu">
+                <div class="color-swatch-grid">
+                  <For each={NOTE_COLORS}>
+                    {(color) => (
+                      <button
+                        class="color-swatch"
+                        title={color.name}
+                        style={{ "background-color": color.bg }}
+                        onClick={() => {
+                          patchNote({ colorKey: color.key });
+                          setPaletteOpen(false);
+                        }}
+                      />
+                    )}
+                  </For>
+                </div>
+                <button
+                  type="button"
+                  class="note-menu-action close-action"
+                  onClick={() => closeCurrentWindow()}
+                >
+                  Close
+                </button>
               </div>
             </Show>
           </header>
@@ -843,6 +1047,7 @@ function NoteWindow(props: { noteId: string }) {
                 <div class="note-editor-stack" classList={{ "is-editing": bodyFocused() }}>
                   <div
                     class="note-body-preview"
+                    classList={{ "is-empty": !bodyText().trim() }}
                     onClick={() => {
                       setBodyFocused(true);
                       window.setTimeout(() => bodyRef?.focus(), 0);
@@ -850,29 +1055,42 @@ function NoteWindow(props: { noteId: string }) {
                   >
                     {renderMarkdownPreview(bodyText())}
                   </div>
-                  <textarea
+                  <div
                     ref={bodyRef}
                     class="note-body-editor"
+                    role="textbox"
                     aria-label="Note line"
                     data-line-id={item().lines[0]?.id ?? item().id}
-                    value={bodyText()}
-                    placeholder="Write..."
+                    data-placeholder="Write..."
+                    contenteditable="plaintext-only"
                     spellcheck={false}
+                    onPointerDown={(event) => {
+                      if (event.button === 2) {
+                        rememberTextSelection("body");
+                        event.preventDefault();
+                      }
+                    }}
+                    onContextMenu={(event) => openTextMenu(event, "body")}
+                    onKeyUp={() => rememberTextSelection("body")}
+                    onPointerUp={() => rememberTextSelection("body")}
                     onClick={(event) => {
                       if (event.ctrlKey) {
                         event.preventDefault();
-                        toggleCurrentTextareaLineStrike(event.currentTarget);
-                        setBodyDraft(event.currentTarget.value);
-                        updateBodyText(event.currentTarget.value);
+                        const next = toggleCurrentEditableLineStrike(event.currentTarget);
+                        setBodyDraft(next);
+                        updateBodyText(next);
                       }
                     }}
                     onInput={(event) => {
-                      setBodyDraft(event.currentTarget.value);
-                      updateBodyText(event.currentTarget.value);
+                      const text = editablePlainText(event.currentTarget);
+                      setBodyDraft(text);
+                      updateBodyText(text);
+                      rememberTextSelection("body");
                       growBody();
                     }}
                     onFocus={() => {
                       setBodyFocused(true);
+                      rememberTextSelection("body");
                       growBody();
                     }}
                     onBlur={() => {
@@ -889,6 +1107,7 @@ function NoteWindow(props: { noteId: string }) {
                   <div class="note-editor-stack" classList={{ "is-editing": rightFocused() }}>
                     <div
                       class="note-body-preview"
+                      classList={{ "is-empty": !rightText().trim() }}
                       onClick={() => {
                         setRightFocused(true);
                         window.setTimeout(() => rightBodyRef?.focus(), 0);
@@ -896,20 +1115,33 @@ function NoteWindow(props: { noteId: string }) {
                     >
                       {renderMarkdownPreview(rightText())}
                     </div>
-                    <textarea
+                    <div
                       ref={rightBodyRef}
                       class="note-body-editor"
+                      role="textbox"
                       aria-label="Note right column"
-                      value={rightText()}
-                      placeholder="Write..."
+                      data-placeholder="Write..."
+                      contenteditable="plaintext-only"
                       spellcheck={false}
+                      onPointerDown={(event) => {
+                        if (event.button === 2) {
+                          rememberTextSelection("right");
+                          event.preventDefault();
+                        }
+                      }}
+                      onContextMenu={(event) => openTextMenu(event, "right")}
+                      onKeyUp={() => rememberTextSelection("right")}
+                      onPointerUp={() => rememberTextSelection("right")}
                       onInput={(event) => {
-                        setRightDraft(event.currentTarget.value);
-                        updateRightText(event.currentTarget.value);
+                        const text = editablePlainText(event.currentTarget);
+                        setRightDraft(text);
+                        updateRightText(text);
+                        rememberTextSelection("right");
                         growBody();
                       }}
                       onFocus={() => {
                         setRightFocused(true);
+                        rememberTextSelection("right");
                         growBody();
                       }}
                       onBlur={() => {
@@ -945,14 +1177,16 @@ function NoteWindow(props: { noteId: string }) {
                 drawSketch(event, canvasRef, activeStroke);
               }}
               onPointerUp={() => {
-                if (canvasRef && activeStroke) finishSketch(canvasRef, activeStroke);
+                if (canvasRef && activeStroke) {
+                  const record = finishSketch(canvasRef, activeStroke);
+                  if (record) saveSketchStroke(record);
+                }
                 activeStroke = null;
-                saveSketch();
               }}
               onPointerLeave={() => {
                 if (canvasRef && activeStroke) {
-                  finishSketch(canvasRef, activeStroke);
-                  saveSketch();
+                  const record = finishSketch(canvasRef, activeStroke);
+                  if (record) saveSketchStroke(record);
                 }
                 activeStroke = null;
               }}
@@ -975,16 +1209,79 @@ function NoteWindow(props: { noteId: string }) {
 
   function hydrateCanvas() {
     const current = note();
-    if (!canvasRef || !current?.sketchData) return;
-    const image = new Image();
-    image.onload = () => {
-      const context = canvasRef?.getContext("2d");
-      if (!context || !canvasRef) return;
-      context.clearRect(0, 0, canvasRef.width, canvasRef.height);
-      context.drawImage(image, 0, 0, canvasRef.width, canvasRef.height);
+    if (!canvasRef) return;
+    const context = canvasRef.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, canvasRef.width, canvasRef.height);
+    const renderStrokes = () => {
+      for (const stroke of current?.sketchStrokes ?? []) renderSketchRecord(context, stroke);
     };
-    image.src = current.sketchData;
+    if (current?.sketchData) {
+      const image = new Image();
+      image.onload = () => {
+        context.clearRect(0, 0, canvasRef!.width, canvasRef!.height);
+        context.drawImage(image, 0, 0, canvasRef!.width, canvasRef!.height);
+        renderStrokes();
+      };
+      image.src = current.sketchData;
+      return;
+    }
+    renderStrokes();
   }
+}
+
+function TextMenuPopupWindow() {
+  const params = new URLSearchParams(window.location.search);
+  const noteId = params.get("noteId") ?? "";
+  const field = params.get("field") ?? "body";
+  const hasSelection = params.get("hasSelection") === "1";
+  const start = Number(params.get("start") ?? "0");
+  const end = Number(params.get("end") ?? "0");
+
+  onMount(() => {
+    getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (!focused) void closeCurrentWindow();
+    });
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === "dismiss-text-menu" || event.data?.type === "quit") void closeCurrentWindow();
+      if (event.data?.type === "note-closed" && event.data.noteId === noteId) void closeCurrentWindow();
+    };
+    channel?.addEventListener("message", onMessage);
+    onCleanup(() => channel?.removeEventListener("message", onMessage));
+  });
+
+  const runMenuCommand = (event: PointerEvent, command: string) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void send(command);
+  };
+
+  const send = async (command: string) => {
+    await emitTo(noteLabel(noteId), "text-menu-command", { field, command, start, end });
+    await closeCurrentWindow();
+  };
+  return (
+    <main
+      class="popup-shell text-menu-popup-shell"
+      onContextMenu={(event) => event.preventDefault()}
+      onPointerDown={(event) => {
+        if (event.button === 0 && !(event.target as HTMLElement).closest(".text-context-menu")) void closeCurrentWindow();
+      }}
+    >
+      <div class="color-popover note-context-menu text-context-menu">
+        <button class="note-menu-action" type="button" disabled={!hasSelection} onPointerDown={(event) => runMenuCommand(event, "cut")}>Cut</button>
+        <button class="note-menu-action" type="button" disabled={!hasSelection} onPointerDown={(event) => runMenuCommand(event, "copy")}>Copy</button>
+        <button class="note-menu-action" type="button" onPointerDown={(event) => runMenuCommand(event, "paste")}>Paste</button>
+        <button class="note-menu-action" type="button" onPointerDown={(event) => runMenuCommand(event, "select-all")}>Select all</button>
+        <div class="text-menu-label">Writing direction</div>
+        <div class="text-direction-row">
+          <button class="note-menu-action" type="button" onPointerDown={(event) => runMenuCommand(event, "dir-ltr")}>LTR</button>
+          <button class="note-menu-action" type="button" onPointerDown={(event) => runMenuCommand(event, "dir-rtl")}>RTL</button>
+        </div>
+      </div>
+    </main>
+  );
 }
 
 function NoteList(props: {
@@ -1547,6 +1844,7 @@ function loadState(): AppState {
         corner: parsed.launcher?.corner ?? "bottom-right",
       },
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
+      lastNoteSize: parsed.lastNoteSize,
     };
   } catch {
     return createInitialState();
@@ -1631,6 +1929,7 @@ function resetDebugSessionState(setState?: (state: AppState) => void) {
   const current = loadState();
   const reset = {
     ...resetNotesForDebug(current),
+    lastNoteSize: undefined,
     settings: {
       ...current.settings,
       copyAfterSave: true,
@@ -1715,15 +2014,14 @@ async function configureLauncherWindow(
   anchor: LauncherAnchor | null = null,
   setAnchor?: (anchor: LauncherAnchor) => void,
 ) {
-  if (!isTauri()) return;
+  if (!isTauri() || launcherUserDragging) return;
   const run = ++launcherConfigureRun;
   launcherIsConfiguring = true;
-  void menuOpen;
   void hovered;
-  void confirmingExit;
   const expanded = menuOpen || confirmingExit;
-  const width = expanded ? LAUNCHER_CANVAS_WIDTH : LAUNCHER_IDLE_CANVAS_WIDTH;
-  const height = expanded ? LAUNCHER_CANVAS_HEIGHT : LAUNCHER_IDLE_CANVAS_HEIGHT;
+  const width = confirmingExit ? LAUNCHER_CONFIRM_CANVAS_WIDTH : expanded ? LAUNCHER_CANVAS_WIDTH : LAUNCHER_IDLE_CANVAS_WIDTH;
+  const height = confirmingExit ? LAUNCHER_CONFIRM_CANVAS_HEIGHT : expanded ? LAUNCHER_CANVAS_HEIGHT : LAUNCHER_IDLE_CANVAS_HEIGHT;
+  const parking = launcherParkingSize();
   const appWindow = getCurrentWindow();
   try {
     const monitor = await primaryMonitor();
@@ -1733,18 +2031,17 @@ async function configureLauncherWindow(
     await appWindow.setSkipTaskbar(true);
     await appWindow.setResizable(false);
     await appWindow.setSize(new LogicalSize(width, height));
-    await clampCurrentWindowToWorkArea(LAUNCHER_SCREEN_MARGIN);
     if (run !== launcherConfigureRun) return;
     if (anchor || launcherWasPlaced) {
       const nextAnchor = anchor ?? (await readWindowAnchor());
-      await positionLauncherFromAnchor(width, height, nextAnchor);
+      await positionLauncherFromAnchor(width, height, parking.width, parking.height, nextAnchor);
       if (run !== launcherConfigureRun) return;
-      setAnchor?.(await readWindowAnchor());
+      if (!confirmingExit) setAnchor?.(await readWindowAnchor());
       return;
     } else {
       const work = monitor?.workArea;
       if (!work) return;
-      await positionWindow(width, height);
+      await positionWindow(width, height, parking.width, parking.height);
       if (run !== launcherConfigureRun) return;
       setAnchor?.(await readWindowAnchor());
       launcherWasPlaced = true;
@@ -1756,6 +2053,28 @@ async function configureLauncherWindow(
       }, 120);
     }
   }
+}
+
+function launcherVisualSize(expanded: boolean, confirmingExit = false) {
+  void confirmingExit;
+  return expanded ? { width: MENU_WIDTH, height: MENU_HEIGHT } : { width: STRIP_HIT_WIDTH, height: STRIP_HEIGHT };
+}
+
+function launcherParkingSize() {
+  return { width: MENU_WIDTH, height: MENU_HEIGHT };
+}
+
+async function updateConfirmSide(setConfirmSide: (side: "left" | "right") => void) {
+  if (!isTauri()) return;
+  const monitor = await primaryMonitor();
+  if (!monitor) return;
+  const scale = monitor.scaleFactor || 1;
+  const position = await getCurrentWindow().outerPosition();
+  const size = await getCurrentWindow().outerSize();
+  const work = monitor.workArea;
+  const windowCenterX = position.x / scale + size.width / scale / 2;
+  const workCenterX = (work.position.x + work.size.width / 2) / scale;
+  setConfirmSide(windowCenterX > workCenterX ? "left" : "right");
 }
 
 async function readWindowAnchor(): Promise<LauncherAnchor> {
@@ -1770,8 +2089,8 @@ async function readWindowAnchor(): Promise<LauncherAnchor> {
   const axisX = position.x / scale + size.width / scale / 2;
   const axisY = position.y / scale + size.height / scale / 2;
   return {
-    right: Math.max(0, right - (axisX + STRIP_HIT_WIDTH / 2)),
-    bottom: Math.max(0, bottom - (axisY + STRIP_HEIGHT / 2)),
+    right: right - axisX,
+    bottom: bottom - axisY,
   };
 }
 
@@ -1796,7 +2115,11 @@ async function configureUtilityWindow(width: number, height: number) {
 
 async function closeCurrentWindow() {
   if (!isTauri()) return;
-  await getCurrentWindow().close();
+  const current = getCurrentWindow();
+  if (current.label.startsWith("note-")) {
+    channel?.postMessage({ type: "note-closed", noteId: current.label.slice(5) });
+  }
+  await current.close();
 }
 
 async function noteSpawnOrigin() {
@@ -1825,7 +2148,7 @@ async function noteSpawnOrigin() {
   };
   const distance = Math.hypot(delta.x, delta.y) || 1;
   const direction = { x: delta.x / distance, y: delta.y / distance };
-  const spacing = 120;
+  const spacing = 126;
   const x = launcherCenter.x + direction.x * spacing - DEFAULT_NOTE_SIZE / 2;
   const y = launcherCenter.y + direction.y * spacing - DEFAULT_NOTE_SIZE / 2;
   return {
@@ -1834,7 +2157,7 @@ async function noteSpawnOrigin() {
   };
 }
 
-async function positionWindow(width: number, height: number) {
+async function positionWindow(width: number, height: number, visualWidth = width, visualHeight = height) {
   const monitor = await primaryMonitor();
   if (!monitor) return;
   const scale = monitor.scaleFactor || 1;
@@ -1843,14 +2166,20 @@ async function positionWindow(width: number, height: number) {
   const top = work.position.y / scale;
   const right = (work.position.x + work.size.width) / scale;
   const bottom = (work.position.y + work.size.height) / scale;
-  const rawX = right - 16 - STRIP_HIT_WIDTH / 2 - width / 2;
-  const rawY = bottom - 16 - STRIP_HEIGHT / 2 - height / 2;
-  const x = clamp(rawX, left + LAUNCHER_SCREEN_MARGIN, right - width - LAUNCHER_SCREEN_MARGIN);
-  const y = clamp(rawY, top + LAUNCHER_SCREEN_MARGIN, bottom - height - LAUNCHER_SCREEN_MARGIN);
-  await getCurrentWindow().setPosition(new LogicalPosition(x, y));
+  const rawCenterX = right - LAUNCHER_SCREEN_MARGIN - visualWidth / 2;
+  const rawCenterY = top + LAUNCHER_SCREEN_MARGIN + visualHeight / 2;
+  const centerX = clamp(rawCenterX, left + LAUNCHER_SCREEN_MARGIN + visualWidth / 2, right - LAUNCHER_SCREEN_MARGIN - visualWidth / 2);
+  const centerY = clamp(rawCenterY, top + LAUNCHER_SCREEN_MARGIN + visualHeight / 2, bottom - LAUNCHER_SCREEN_MARGIN - visualHeight / 2);
+  await getCurrentWindow().setPosition(new LogicalPosition(centerX - width / 2, centerY - height / 2));
 }
 
-async function positionLauncherFromAnchor(width: number, height: number, anchor: LauncherAnchor) {
+async function positionLauncherFromAnchor(
+  width: number,
+  height: number,
+  visualWidth: number,
+  visualHeight: number,
+  anchor: LauncherAnchor,
+) {
   const monitor = await primaryMonitor();
   if (!monitor) return;
   const scale = monitor.scaleFactor || 1;
@@ -1859,30 +2188,151 @@ async function positionLauncherFromAnchor(width: number, height: number, anchor:
   const top = work.position.y / scale;
   const right = (work.position.x + work.size.width) / scale;
   const bottom = (work.position.y + work.size.height) / scale;
-  const rawX = right - anchor.right - STRIP_HIT_WIDTH / 2 - width / 2;
-  const rawY = bottom - anchor.bottom - STRIP_HEIGHT / 2 - height / 2;
-  const x = clamp(rawX, left + LAUNCHER_SCREEN_MARGIN, right - width - LAUNCHER_SCREEN_MARGIN);
-  const y = clamp(rawY, top + LAUNCHER_SCREEN_MARGIN, bottom - height - LAUNCHER_SCREEN_MARGIN);
-  await getCurrentWindow().setPosition(new LogicalPosition(x, y));
+  const rawCenterX = right - anchor.right;
+  const rawCenterY = bottom - anchor.bottom;
+  const centerX = clamp(rawCenterX, left + LAUNCHER_SCREEN_MARGIN + visualWidth / 2, right - LAUNCHER_SCREEN_MARGIN - visualWidth / 2);
+  const centerY = clamp(rawCenterY, top + LAUNCHER_SCREEN_MARGIN + visualHeight / 2, bottom - LAUNCHER_SCREEN_MARGIN - visualHeight / 2);
+  await getCurrentWindow().setPosition(new LogicalPosition(centerX - width / 2, centerY - height / 2));
 }
 
-async function clampCurrentWindowToWorkArea(margin: number) {
-  if (!isTauri()) return;
+async function clampCurrentLauncherToWorkArea(visualWidth: number, visualHeight: number, margin: number) {
+  if (!isTauri()) return false;
   const monitor = await primaryMonitor();
-  if (!monitor) return;
+  if (!monitor) return false;
   const scale = monitor.scaleFactor || 1;
   const work = monitor.workArea;
   const position = await getCurrentWindow().outerPosition();
   const size = await getCurrentWindow().outerSize();
-  const left = work.position.x / scale;
-  const top = work.position.y / scale;
-  const right = (work.position.x + work.size.width) / scale;
-  const bottom = (work.position.y + work.size.height) / scale;
-  const x = clamp(position.x / scale, left + margin, right - size.width / scale - margin);
-  const y = clamp(position.y / scale, top + margin, bottom - size.height / scale - margin);
-  if (Math.abs(x - position.x / scale) > 0.5 || Math.abs(y - position.y / scale) > 0.5) {
-    await getCurrentWindow().setPosition(new LogicalPosition(x, y));
-  }
+  const windowX = position.x / scale;
+  const windowY = position.y / scale;
+  const windowWidth = size.width / scale;
+  const windowHeight = size.height / scale;
+  const parkingLeft = windowX + (windowWidth - visualWidth) / 2;
+  const parkingTop = windowY + (windowHeight - visualHeight) / 2;
+  const parkingRight = parkingLeft + visualWidth;
+  const parkingBottom = parkingTop + visualHeight;
+  const allowedLeft = work.position.x / scale + margin;
+  const allowedTop = work.position.y / scale + margin;
+  const allowedRight = (work.position.x + work.size.width) / scale - margin;
+  const allowedBottom = (work.position.y + work.size.height) / scale - margin;
+  let dx = 0;
+  let dy = 0;
+
+  if (parkingLeft < allowedLeft) dx = allowedLeft - parkingLeft;
+  else if (parkingRight > allowedRight) dx = allowedRight - parkingRight;
+
+  if (parkingTop < allowedTop) dy = allowedTop - parkingTop;
+  else if (parkingBottom > allowedBottom) dy = allowedBottom - parkingBottom;
+
+  if (Math.abs(dx) <= 0.5 && Math.abs(dy) <= 0.5) return false;
+  await getCurrentWindow().setPosition(new LogicalPosition(windowX + dx, windowY + dy));
+  return true;
+}
+
+async function openTextMenuPopupWindow(noteId: string, field: "body" | "right", clientX: number, clientY: number, hasSelection: boolean, start: number, end: number) {
+  if (!isTauri()) return;
+  const existing = await WebviewWindow.getByLabel("text-menu-popup");
+  await existing?.close();
+  const { x, y, width, height } = await popupAtCurrentWindowPoint(clientX, clientY, 170, 250);
+  const webview = new WebviewWindow("text-menu-popup", {
+    url: `index.html?role=text-menu&noteId=${encodeURIComponent(noteId)}&field=${encodeURIComponent(field)}&hasSelection=${hasSelection ? "1" : "0"}&start=${start}&end=${end}`,
+    title: "Simeioma Text Menu",
+    x,
+    y,
+    width,
+    height,
+    decorations: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    shadow: false,
+    focus: false,
+    focusable: false,
+    visible: true,
+  });
+  await webview.once("tauri://created", () => undefined);
+}
+
+async function popupAtCurrentWindowPoint(clientX: number, clientY: number, width: number, height: number) {
+  const fallback = { x: clientX, y: clientY, width, height };
+  if (!isTauri()) return fallback;
+  const monitor = await primaryMonitor();
+  if (!monitor) return fallback;
+  const scale = monitor.scaleFactor || 1;
+  const work = monitor.workArea;
+  const position = await getCurrentWindow().outerPosition();
+  const workLeft = work.position.x / scale;
+  const workTop = work.position.y / scale;
+  const workRight = (work.position.x + work.size.width) / scale;
+  const workBottom = (work.position.y + work.size.height) / scale;
+  return {
+    x: clamp(position.x / scale + clientX, workLeft + 12, workRight - width - 12),
+    y: clamp(position.y / scale + clientY, workTop + 12, workBottom - height - 12),
+    width,
+    height,
+  };
+}
+
+async function openReminderPopupWindow(noteIds: string[]) {
+  if (!isTauri()) return;
+  const existing = await WebviewWindow.getByLabel("reminder-popup");
+  await existing?.close();
+  const { x, y, width, height } = await popupNearCurrentWindow(72, 72, 92);
+  const webview = new WebviewWindow("reminder-popup", {
+    url: `index.html?role=reminder&noteIds=${encodeURIComponent(noteIds.join(","))}`,
+    title: "Simeioma Reminder",
+    x,
+    y,
+    width,
+    height,
+    decorations: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    shadow: false,
+    visible: true,
+  });
+  await webview.once("tauri://created", () => undefined);
+}
+
+async function configureReminderPopupWindow() {
+  if (!isTauri()) return;
+  const appWindow = getCurrentWindow();
+  await appWindow.setAlwaysOnTop(true);
+  await appWindow.setSkipTaskbar(true);
+  await appWindow.setResizable(false);
+  await appWindow.setSize(new LogicalSize(72, 72));
+}
+
+async function popupNearCurrentWindow(width: number, height: number, spacing: number) {
+  const fallback = { x: 160, y: 160, width, height };
+  if (!isTauri()) return fallback;
+  const monitor = await primaryMonitor();
+  if (!monitor) return fallback;
+  const scale = monitor.scaleFactor || 1;
+  const work = monitor.workArea;
+  const position = await getCurrentWindow().outerPosition();
+  const size = await getCurrentWindow().outerSize();
+  const launcherCenter = {
+    x: position.x / scale + size.width / scale / 2,
+    y: position.y / scale + size.height / scale / 2,
+  };
+  const workLeft = work.position.x / scale;
+  const workTop = work.position.y / scale;
+  const workRight = (work.position.x + work.size.width) / scale;
+  const workBottom = (work.position.y + work.size.height) / scale;
+  const workCenter = { x: (workLeft + workRight) / 2, y: (workTop + workBottom) / 2 };
+  const delta = { x: workCenter.x - launcherCenter.x, y: workCenter.y - launcherCenter.y };
+  const distance = Math.hypot(delta.x, delta.y) || 1;
+  const direction = { x: delta.x / distance, y: delta.y / distance };
+  return {
+    x: clamp(launcherCenter.x + direction.x * spacing - width / 2, workLeft + 12, workRight - width - 12),
+    y: clamp(launcherCenter.y + direction.y * spacing - height / 2, workTop + 12, workBottom - height - 12),
+    width,
+    height,
+  };
 }
 
 async function openNoteWindow(id: string) {
@@ -2193,21 +2643,115 @@ function safeMarkdownHref(href: string) {
   return /^(https?:|mailto:|#)/i.test(href) ? href : "#";
 }
 
-function hasActiveTextSelection(textarea: HTMLTextAreaElement | undefined) {
-  if (textarea && textarea.selectionStart !== textarea.selectionEnd) return true;
+function shouldBlockNoteDrag(event: PointerEvent) {
+  const target = event.target as HTMLElement;
+  if (target.closest("button, select, .color-popover, .note-context-menu, .mention-row, .note-resize-handle")) return true;
+  if (target.closest(".note-titlebar")) return Boolean(target.closest("button, .color-popover, .note-context-menu"));
+  if (target.closest("textarea, input, .note-body-editor")) return true;
+
+  const preview = target.closest(".note-body-preview");
+  if (preview) return isPointerOverRenderedText(preview, event);
+
+  return false;
+}
+
+function isPointerOverRenderedText(preview: Element, event: PointerEvent) {
+  const range = document.caretRangeFromPoint?.(event.clientX, event.clientY);
+  const node = range?.startContainer;
+  return Boolean(node && preview.contains(node) && node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
+}
+
+function editablePlainText(editor: HTMLElement) {
+  return (editor.innerText || editor.textContent || "").replace(/\r\n/g, "\n");
+}
+
+function syncEditableText(editor: HTMLElement | undefined, text: string) {
+  if (!editor) return;
+  if (editablePlainText(editor) !== text) editor.textContent = text;
+}
+
+function currentEditorRange(editor: HTMLElement) {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || !selection.anchorNode || !selection.focusNode) return null;
+  if (!nodeInside(editor, selection.anchorNode) || !nodeInside(editor, selection.focusNode)) return null;
+  return selection.getRangeAt(0).cloneRange();
+}
+
+function collapsedEditorEndRange(editor: HTMLElement) {
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  return range;
+}
+
+function selectEditorRange(range: Range) {
+  const selection = window.getSelection();
+  if (!selection) return;
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function nodeInside(root: HTMLElement, node: Node) {
+  return node === root || root.contains(node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement);
+}
+
+function hasActiveTextSelection(editor: HTMLElement | undefined) {
+  if (editor) {
+    const range = currentEditorRange(editor);
+    if (range && !range.collapsed) return true;
+  }
   return Boolean(document.getSelection()?.toString());
 }
 
-function toggleCurrentTextareaLineStrike(textarea: HTMLTextAreaElement) {
-  const value = textarea.value;
-  const cursor = textarea.selectionStart;
+function editableSelectionOffsets(editor: HTMLElement) {
+  const range = currentEditorRange(editor);
+  if (!range) return null;
+  const start = document.createRange();
+  start.selectNodeContents(editor);
+  start.setEnd(range.startContainer, range.startOffset);
+  const end = document.createRange();
+  end.selectNodeContents(editor);
+  end.setEnd(range.endContainer, range.endOffset);
+  return { start: start.toString().length, end: end.toString().length };
+}
+
+function setEditorSelectionOffsets(editor: HTMLElement, start: number, end: number) {
+  const range = document.createRange();
+  const from = editorTextPosition(editor, start);
+  const to = editorTextPosition(editor, end);
+  range.setStart(from.node, from.offset);
+  range.setEnd(to.node, to.offset);
+  selectEditorRange(range);
+}
+
+function editorTextPosition(editor: HTMLElement, offset: number) {
+  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  let remaining = Math.max(0, offset);
+  let last: Text | null = null;
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text;
+    last = node;
+    if (remaining <= node.data.length) return { node, offset: remaining };
+    remaining -= node.data.length;
+  }
+  if (last) return { node: last, offset: last.data.length };
+  const text = document.createTextNode("");
+  editor.appendChild(text);
+  return { node: text, offset: 0 };
+}
+
+function toggleCurrentEditableLineStrike(editor: HTMLElement) {
+  const value = editablePlainText(editor);
+  const cursor = editableSelectionOffsets(editor)?.start ?? value.length;
   const lineStart = value.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
   const nextBreak = value.indexOf("\n", cursor);
   const lineEnd = nextBreak === -1 ? value.length : nextBreak;
   const line = value.slice(lineStart, lineEnd);
   const replacement = line.startsWith("~~") && line.endsWith("~~") ? line.slice(2, -2) : `~~${line}~~`;
-  textarea.value = `${value.slice(0, lineStart)}${replacement}${value.slice(lineEnd)}`;
-  textarea.setSelectionRange(lineStart, lineStart + replacement.length);
+  const next = `${value.slice(0, lineStart)}${replacement}${value.slice(lineEnd)}`;
+  editor.textContent = next;
+  setEditorSelectionOffsets(editor, lineStart, lineStart + replacement.length);
+  return next;
 }
 
 function notesToMarkdown(notes: Note[]) {
@@ -2245,6 +2789,10 @@ async function saveBinaryExport(settings: Settings, filename: string, bytes: Uin
 }
 
 async function copyText(value: string) {
+  if (isTauri()) {
+    await invoke("write_clipboard_text", { text: value });
+    return;
+  }
   await navigator.clipboard?.writeText(value);
 }
 
@@ -2366,21 +2914,36 @@ function drawSketch(event: PointerEvent, canvas: HTMLCanvasElement, stroke: Sket
   stroke.last = point;
 }
 
-function finishSketch(canvas: HTMLCanvasElement, stroke: SketchStroke) {
+function finishSketch(canvas: HTMLCanvasElement, stroke: SketchStroke): SketchStrokeRecord {
   const shape = detectSketchShape(stroke.points);
-  if (!shape) return;
+  const record: SketchStrokeRecord = shape ?? { type: "freehand", points: stroke.points };
   const context = canvas.getContext("2d");
-  if (!context) return;
-  if (stroke.before) context.putImageData(stroke.before, 0, 0);
+  if (!context) return record;
+  if (shape && stroke.before) {
+    context.putImageData(stroke.before, 0, 0);
+    renderSketchRecord(context, record);
+  }
+  return record;
+}
+
+function renderSketchRecord(context: CanvasRenderingContext2D, record: SketchStrokeRecord) {
   configureSketchContext(context);
   context.beginPath();
-  if (shape.type === "line") {
-    context.moveTo(shape.start.x, shape.start.y);
-    context.lineTo(shape.end.x, shape.end.y);
-  } else if (shape.type === "circle") {
-    context.arc(shape.center.x, shape.center.y, shape.radius, 0, Math.PI * 2);
-  } else {
-    context.rect(shape.x, shape.y, shape.width, shape.height);
+  if (record.type === "line") {
+    context.moveTo(record.start.x, record.start.y);
+    context.lineTo(record.end.x, record.end.y);
+  } else if (record.type === "circle") {
+    context.arc(record.center.x, record.center.y, record.radius, 0, Math.PI * 2);
+  } else if (record.type === "rect") {
+    context.rect(record.x, record.y, record.width, record.height);
+  } else if (record.points.length) {
+    context.moveTo(record.points[0].x, record.points[0].y);
+    let last = record.points[0];
+    for (const point of record.points.slice(1)) {
+      const mid = { x: (last.x + point.x) / 2, y: (last.y + point.y) / 2 };
+      context.quadraticCurveTo(last.x, last.y, mid.x, mid.y);
+      last = point;
+    }
   }
   context.stroke();
 }
@@ -2459,7 +3022,7 @@ function readableKey(key: string) {
   return key;
 }
 
-function pointerCombo(event: PointerEvent) {
+function pointerCombo(event: MouseEvent | PointerEvent) {
   const parts = [];
   if (event.ctrlKey) parts.push("Ctrl");
   if (event.shiftKey) parts.push("Shift");
@@ -2467,6 +3030,18 @@ function pointerCombo(event: PointerEvent) {
   if (event.metaKey) parts.push("Meta");
   parts.push(mouseButtonName(event.button));
   return parts.join(" + ");
+}
+
+function matchesCombo(actual: string, expected: string) {
+  return normalizeCombo(actual) === normalizeCombo(expected);
+}
+
+function normalizeCombo(combo: string) {
+  return combo
+    .split("+")
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean)
+    .join(" + ");
 }
 
 function mouseButtonName(button: number) {
@@ -2499,6 +3074,28 @@ function durationDigitsToHours(value: string) {
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+async function readClipboardText() {
+  try {
+    if (isTauri()) return String(await invoke("read_clipboard_text"));
+    return await navigator.clipboard.readText();
+  } catch {
+    return "";
+  }
+}
+
+async function isLeftMouseDown() {
+  if (!isTauri()) return false;
+  try {
+    return Boolean(await invoke("is_left_mouse_down"));
+  } catch {
+    return false;
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function canvasPoint(event: PointerEvent, canvas: HTMLCanvasElement) {
@@ -2558,15 +3155,6 @@ function SplitIcon() {
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M12 5v14" />
       <path d="M5 7h5M14 7h5M5 12h5M14 12h5M5 17h5M14 17h5" />
-    </svg>
-  );
-}
-
-function PencilIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m4 16 8.5-8.5 4 4L8 20H4v-4Z" />
-      <path d="m14 6 4 4" />
     </svg>
   );
 }

@@ -2,6 +2,12 @@ export type ReminderMode = "periodic" | "timeOfDay";
 export type ReminderTarget = "all" | "important" | "tasks" | "attention";
 export type ExportFormat = "txt" | "markdown" | "png" | "jpeg";
 export type NoteLayout = "single" | "two-column";
+export type SketchPointRecord = { x: number; y: number };
+export type SketchStrokeRecord =
+  | { type: "freehand"; points: SketchPointRecord[] }
+  | { type: "line"; start: SketchPointRecord; end: SketchPointRecord }
+  | { type: "circle"; center: SketchPointRecord; radius: number }
+  | { type: "rect"; x: number; y: number; width: number; height: number };
 
 export type NoteLine = {
   id: string;
@@ -19,6 +25,7 @@ export type Note = {
   layout?: NoteLayout;
   rightText?: string;
   sketchData?: string;
+  sketchStrokes?: SketchStrokeRecord[];
   createdAt: string;
   updatedAt: string;
   viewedAt?: string;
@@ -49,6 +56,7 @@ export type AppState = {
     corner: "bottom-right" | "bottom-left" | "top-right" | "top-left";
   };
   settings: Settings;
+  lastNoteSize?: { width: number; height: number };
 };
 
 export type ReminderNotice = {
@@ -154,7 +162,7 @@ export function createNoteInState(
     updatedAt: input.now,
     viewedAt: input.now,
     position: input.origin ? nextNotePositionFromLatest(state.notes.at(-1), input.origin) : undefined,
-    size: state.notes.at(-1)?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE },
+    size: state.lastNoteSize ?? state.notes.at(-1)?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE },
   };
 
   return {
@@ -210,6 +218,7 @@ export function updateNoteSize(
 ): AppState {
   return {
     ...state,
+    lastNoteSize: size,
     notes: state.notes.map((note) => (note.id === noteId ? { ...note, size } : note)),
   };
 }

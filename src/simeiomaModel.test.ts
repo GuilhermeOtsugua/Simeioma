@@ -109,21 +109,26 @@ describe("Simeioma model", () => {
     expect(second.note?.position).toEqual({ x: 100, y: 241 });
   });
 
-  test("new notes inherit the latest note size", () => {
-    const first = createNoteInState(createInitialState(0), {
+  test("new notes inherit the latest resized note size", () => {
+    let state = createNoteInState(createInitialState(0), {
       id: "first",
       lineId: "first-line",
       now: "2026-05-18T12:00:00.000Z",
     }).state;
-    const resized = updateNoteSize(first, "first", { width: 320, height: 240 });
-
-    const second = createNoteInState(resized, {
+    state = createNoteInState(state, {
       id: "second",
       lineId: "second-line",
       now: "2026-05-18T12:01:00.000Z",
+    }).state;
+    const resized = updateNoteSize(state, "first", { width: 640, height: 240 });
+
+    const third = createNoteInState(resized, {
+      id: "third",
+      lineId: "third-line",
+      now: "2026-05-18T12:02:00.000Z",
     });
 
-    expect(second.note?.size).toEqual({ width: 320, height: 240 });
+    expect(third.note?.size).toEqual({ width: 640, height: 240 });
   });
 
   test("attention reminders include important notes and open task notes", () => {

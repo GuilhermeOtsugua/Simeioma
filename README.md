@@ -81,8 +81,14 @@ Use visual QA and production executable smoke tests for layout-sensitive desktop
 work, especially launcher placement, transparent windows, drag behavior, and
 native focus issues.
 
----
+## License
 
-Copyright (c) 2026 Guilherme Otsugua. All rights reserved.
+Copyright (c) 2026 Guilherme Otsugua.
 
-This repository is provided for viewing and evaluation only. No license is granted to copy, modify, distribute, sublicense, or use this code in another project without prior written permission.
+Simeioma is developed as an independent product and research project by Guilherme Otsugua.
+
+Simeioma is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). See [LICENSE](LICENSE).
+
+Commercial/proprietary licenses are available separately. If you want to use Simeioma or derivative work in a closed-source product, hosted service, bundled offering, or other proprietary context, see [COMMERCIAL.md](COMMERCIAL.md).
+
+By contributing to this repository, you agree that your contributions are licensed under `AGPL-3.0-only` and may also be used by the project maintainer under separate commercial license terms. See [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -58,6 +58,33 @@ Build the frontend:
 bun run build
 ```
 
+Build the Windows desktop executable for manual testing:
+
+```sh
+bun run build:desktop:windows
+```
+
+The production executable is written to:
+
+```text
+src-tauri/target/release/simeioma.exe
+```
+
+The Windows installer bundles are written to:
+
+```text
+src-tauri/target/release/bundle/msi/Simeioma_1.0.0_x64_en-US.msi
+src-tauri/target/release/bundle/nsis/Simeioma_1.0.0_x64-setup.exe
+```
+
+If the build fails with `Access is denied` while replacing `simeioma.exe`, close
+Simeioma first or stop the running process before rebuilding:
+
+```powershell
+Get-Process simeioma -ErrorAction SilentlyContinue | Stop-Process -Force
+bun run build:desktop:windows
+```
+
 ## Verification Strategy
 
 Use the fast loop while iterating on Simeioma:

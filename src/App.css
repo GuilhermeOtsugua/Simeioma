@@ -522,13 +522,6 @@ svg {
   color: #fffaf0;
 }
 
-.reminder-popup-shell {
-  position: relative;
-  width: 100vw;
-  height: 100vh;
-  background: transparent;
-}
-
 .reminder-toast {
   position: absolute;
   left: 50%;
@@ -555,6 +548,10 @@ svg {
 
 .reminder-toast small {
   color: rgba(35, 30, 22, 0.66);
+}
+
+.launcher-reminder-toast {
+  top: calc(50% - 113px);
 }
 
 .note-shell {

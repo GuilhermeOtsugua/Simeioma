@@ -85,10 +85,6 @@ function App() {
     return <NotesListWindow />;
   }
 
-  if (role === "reminder") {
-    return <ReminderPopupWindow />;
-  }
-
   if (role === "text-menu") {
     return <TextMenuPopupWindow />;
   }
@@ -212,13 +208,6 @@ function LauncherWindow() {
     const contents = format === "txt" ? notesToText(latest.notes) : notesToMarkdown(latest.notes);
     await saveTextExport(latest.settings, filename, contents);
   };
-
-  createEffect(() => {
-    const current = notice();
-    if (current?.noteIds.length) {
-      void openReminderPopupWindow(current.noteIds);
-    }
-  });
 
   const matchingNoticeNotes = createMemo(() =>
     notice() ? state().notes.filter((note) => notice()!.noteIds.includes(note.id)) : [],
@@ -406,6 +395,20 @@ function LauncherWindow() {
           </nav>
         </Show>
       </section>
+      <Show when={notice()}>
+        {(item) => (
+          <button
+            class="reminder-toast launcher-reminder-toast"
+            type="button"
+            onClick={async () => {
+              for (const match of matchingNoticeNotes()) await openNoteWindow(match.id);
+              setNotice(null);
+            }}
+          >
+            <span>{item().noteIds.length}</span>
+          </button>
+        )}
+      </Show>
       <Show when={confirmingExit()}>
         <section
           class="exit-confirmation"
@@ -440,35 +443,6 @@ function LauncherWindow() {
           </div>
         </section>
       </Show>
-    </main>
-  );
-}
-
-function ReminderPopupWindow() {
-  const params = new URLSearchParams(window.location.search);
-  const noteIds = (params.get("noteIds") ?? "").split(",").filter(Boolean);
-
-  onMount(() => {
-    configureReminderPopupWindow();
-    const onMessage = (event: MessageEvent) => {
-      if (event.data?.type === "note-focused" && noteIds.includes(event.data.noteId)) {
-        closeCurrentWindow();
-      }
-    };
-    channel?.addEventListener("message", onMessage);
-    onCleanup(() => channel?.removeEventListener("message", onMessage));
-  });
-
-  const focusRelatedNotes = async () => {
-    for (const id of noteIds) await openNoteWindow(id);
-    await closeCurrentWindow();
-  };
-
-  return (
-    <main class="reminder-popup-shell">
-      <button class="reminder-toast" type="button" onClick={focusRelatedNotes}>
-        <span>{noteIds.length}</span>
-      </button>
     </main>
   );
 }
@@ -2269,67 +2243,6 @@ async function popupAtCurrentWindowPoint(clientX: number, clientY: number, width
   return {
     x: clamp(position.x / scale + clientX, workLeft + 12, workRight - width - 12),
     y: clamp(position.y / scale + clientY, workTop + 12, workBottom - height - 12),
-    width,
-    height,
-  };
-}
-
-async function openReminderPopupWindow(noteIds: string[]) {
-  if (!isTauri()) return;
-  const existing = await WebviewWindow.getByLabel("reminder-popup");
-  await existing?.close();
-  const { x, y, width, height } = await popupNearCurrentWindow(72, 72, 92);
-  const webview = new WebviewWindow("reminder-popup", {
-    url: `index.html?role=reminder&noteIds=${encodeURIComponent(noteIds.join(","))}`,
-    title: "Simeioma Reminder",
-    x,
-    y,
-    width,
-    height,
-    decorations: false,
-    transparent: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    shadow: false,
-    visible: true,
-  });
-  await webview.once("tauri://created", () => undefined);
-}
-
-async function configureReminderPopupWindow() {
-  if (!isTauri()) return;
-  const appWindow = getCurrentWindow();
-  await appWindow.setAlwaysOnTop(true);
-  await appWindow.setSkipTaskbar(true);
-  await appWindow.setResizable(false);
-  await appWindow.setSize(new LogicalSize(72, 72));
-}
-
-async function popupNearCurrentWindow(width: number, height: number, spacing: number) {
-  const fallback = { x: 160, y: 160, width, height };
-  if (!isTauri()) return fallback;
-  const monitor = await primaryMonitor();
-  if (!monitor) return fallback;
-  const scale = monitor.scaleFactor || 1;
-  const work = monitor.workArea;
-  const position = await getCurrentWindow().outerPosition();
-  const size = await getCurrentWindow().outerSize();
-  const launcherCenter = {
-    x: position.x / scale + size.width / scale / 2,
-    y: position.y / scale + size.height / scale / 2,
-  };
-  const workLeft = work.position.x / scale;
-  const workTop = work.position.y / scale;
-  const workRight = (work.position.x + work.size.width) / scale;
-  const workBottom = (work.position.y + work.size.height) / scale;
-  const workCenter = { x: (workLeft + workRight) / 2, y: (workTop + workBottom) / 2 };
-  const delta = { x: workCenter.x - launcherCenter.x, y: workCenter.y - launcherCenter.y };
-  const distance = Math.hypot(delta.x, delta.y) || 1;
-  const direction = { x: delta.x / distance, y: delta.y / distance };
-  return {
-    x: clamp(launcherCenter.x + direction.x * spacing - width / 2, workLeft + 12, workRight - width - 12),
-    y: clamp(launcherCenter.y + direction.y * spacing - height / 2, workTop + 12, workBottom - height - 12),
     width,
     height,
   };

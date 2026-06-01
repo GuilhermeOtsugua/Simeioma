@@ -1144,13 +1144,18 @@ function NoteWindow(props: { noteId: string }) {
               width="384"
               height="384"
               onPointerDown={(event) => {
+                if (event.button !== 0) {
+                  activeStroke = null;
+                  return;
+                }
                 activeStroke = startSketch(event, canvasRef);
               }}
               onPointerMove={(event) => {
-                if (!canvasRef || !activeStroke) return;
+                if (!canvasRef || !activeStroke || (event.buttons & 1) === 0) return;
                 drawSketch(event, canvasRef, activeStroke);
               }}
-              onPointerUp={() => {
+              onPointerUp={(event) => {
+                if (event.button !== 0) return;
                 if (canvasRef && activeStroke) {
                   const record = finishSketch(canvasRef, activeStroke);
                   if (record) saveSketchStroke(record);

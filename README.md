@@ -40,17 +40,23 @@ Install dependencies:
 bun install
 ```
 
-Run the web frontend:
+Run the web frontend when you only need the Vite page:
 
 ```sh
 bun run dev
 ```
 
-Run the desktop app:
+Use the Tauri dev app as the default interactive debugging loop:
 
 ```sh
 bun run tauri dev
 ```
+
+This starts the Vite dev server and launches the native Tauri shell against it.
+Frontend changes hot reload; Rust, Tauri config, permission, and native command
+changes may trigger a slower shell rebuild/restart. This is the preferred way to
+debug launcher behavior, transparent windows, custom popups, drag/focus issues,
+and text selection before doing a production executable build.
 
 Build the frontend:
 
@@ -85,28 +91,36 @@ Get-Process simeioma -ErrorAction SilentlyContinue | Stop-Process -Force
 bun run build:desktop:windows
 ```
 
-## Verification Strategy
+## Debugging and Verification Strategy
 
-Use the fast loop while iterating on Simeioma:
+Use the Tauri dev app as the default loop for interactive desktop debugging:
+
+```sh
+bun run tauri dev
+```
+
+Use deterministic checks before considering a change complete:
 
 ```sh
 bun run test
-bun run test:ui
 bun run build
+cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-This catches model behavior, browser-level interaction regressions, and
-TypeScript/Vite issues in seconds. Reserve native checks for changes that touch
-Tauri windows, permissions, Rust commands, bundling, or desktop-only behavior:
+These cover model behavior, frontend compilation, and Rust/Tauri compilation
+without relying on browser interaction tests that do not accurately represent the
+desktop app's native window, focus, drag, and selection behavior.
+
+Build the Windows executable only when you need a fresh artifact for stable
+manual desktop testing or release validation:
 
 ```sh
-cargo check --manifest-path src-tauri/Cargo.toml
 bun run build:desktop:windows
 ```
 
-Use visual QA and production executable smoke tests for layout-sensitive desktop
-work, especially launcher placement, transparent windows, drag behavior, and
-native focus issues.
+Manual testing is the source of truth for layout-sensitive desktop behavior,
+especially launcher placement, transparent windows, drag behavior, custom popup
+focus, and native text selection.
 
 ## License
 

@@ -11,8 +11,6 @@
     "build:desktop:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:ui": "playwright test",
-    "visual:qa": "node scripts/visual-qa.mjs",
     "serve": "vite preview",
     "tauri": "tauri"
   },

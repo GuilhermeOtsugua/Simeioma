@@ -7,6 +7,19 @@ export function syncEditableText(editor: HTMLElement | undefined, text: string) 
   if (editablePlainText(editor) !== text) editor.textContent = text;
 }
 
+export function editorHasFocusOrSelection(editor: HTMLElement | undefined) {
+  if (!editor) return false;
+  if (document.activeElement === editor) return true;
+  const selection = window.getSelection();
+  return Boolean(
+    selection?.rangeCount &&
+    selection.anchorNode &&
+    selection.focusNode &&
+    nodeInside(editor, selection.anchorNode) &&
+    nodeInside(editor, selection.focusNode),
+  );
+}
+
 export function currentEditorRange(editor: HTMLElement) {
   const selection = window.getSelection();
   if (!selection?.rangeCount || !selection.anchorNode || !selection.focusNode) return null;

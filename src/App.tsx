@@ -53,6 +53,7 @@ import {
   currentEditorRange,
   editablePlainText,
   editableSelectionOffsets,
+  editorHasFocusOrSelection,
   hasActiveTextSelection,
   selectEditorRange,
   setEditorSelectionOffsets,
@@ -580,7 +581,7 @@ function NoteWindow(props: { noteId: string }) {
   const itemLayoutIsTwoColumn = createMemo(() => note()?.layout === "two-column");
 
   createEffect(() => {
-    if (document.activeElement !== bodyRef) {
+    if (!editorHasFocusOrSelection(bodyRef)) {
       const text = storedBodyText();
       setBodyDraft(text);
       syncEditableText(bodyRef, text);
@@ -588,7 +589,7 @@ function NoteWindow(props: { noteId: string }) {
   });
 
   createEffect(() => {
-    if (document.activeElement !== rightBodyRef) {
+    if (!editorHasFocusOrSelection(rightBodyRef)) {
       const text = storedRightText();
       setRightDraft(text);
       syncEditableText(rightBodyRef, text);
@@ -1081,7 +1082,9 @@ function NoteWindow(props: { noteId: string }) {
                     }}
                     onBlur={() => {
                       syncAfterLineEdit();
-                      setBodyFocused(false);
+                      window.setTimeout(() => {
+                        if (!editorHasFocusOrSelection(bodyRef)) setBodyFocused(false);
+                      }, 0);
                     }}
                   />
                 </div>
@@ -1132,7 +1135,9 @@ function NoteWindow(props: { noteId: string }) {
                       }}
                       onBlur={() => {
                         syncAfterLineEdit();
-                        setRightFocused(false);
+                        window.setTimeout(() => {
+                          if (!editorHasFocusOrSelection(rightBodyRef)) setRightFocused(false);
+                        }, 0);
                       }}
                     />
                   </div>

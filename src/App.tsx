@@ -59,6 +59,16 @@ import {
   setEditorSelectionOffsets,
   syncEditableText,
 } from "./textSelection";
+import {
+  clampParkingDelta,
+  launcherAnchorFromWindow,
+  parkingRect,
+  scaledWorkArea,
+  visualCenterForTopRight,
+  visualCenterFromAnchor,
+  windowPositionForVisualCenter,
+  type LauncherAnchor,
+} from "./windowGeometry";
 import "./App.css";
 
 const STORAGE_KEY = "simeioma:v1";
@@ -78,8 +88,6 @@ let launcherWasPlaced = false;
 let launcherIsConfiguring = false;
 let launcherConfigureRun = 0;
 let launcherUserDragging = false;
-
-type LauncherAnchor = { right: number; bottom: number };
 
 function App() {
   const params = new URLSearchParams(window.location.search);
@@ -2073,19 +2081,16 @@ async function updateConfirmSide(setConfirmSide: (side: "left" | "right") => voi
 
 async function readWindowAnchor(): Promise<LauncherAnchor> {
   const monitor = await primaryMonitor();
-  const scale = monitor?.scaleFactor || 1;
-  const work = monitor?.workArea;
+  if (!monitor) return { right: 16, bottom: 16 };
+  const work = scaledWorkArea(monitor);
   const position = await getCurrentWindow().outerPosition();
   const size = await getCurrentWindow().outerSize();
-  if (!work) return { right: 16, bottom: 16 };
-  const right = (work.position.x + work.size.width) / scale;
-  const bottom = (work.position.y + work.size.height) / scale;
-  const axisX = position.x / scale + size.width / scale / 2;
-  const axisY = position.y / scale + size.height / scale / 2;
-  return {
-    right: right - axisX,
-    bottom: bottom - axisY,
-  };
+  return launcherAnchorFromWindow(work, {
+    x: position.x / work.scale,
+    y: position.y / work.scale,
+    width: size.width / work.scale,
+    height: size.height / work.scale,
+  });
 }
 
 async function configureNoteWindow(noteId: string) {
@@ -2154,17 +2159,13 @@ async function noteSpawnOrigin() {
 async function positionWindow(width: number, height: number, visualWidth = width, visualHeight = height) {
   const monitor = await primaryMonitor();
   if (!monitor) return;
-  const scale = monitor.scaleFactor || 1;
-  const work = monitor.workArea;
-  const left = work.position.x / scale;
-  const top = work.position.y / scale;
-  const right = (work.position.x + work.size.width) / scale;
-  const bottom = (work.position.y + work.size.height) / scale;
-  const rawCenterX = right - LAUNCHER_SCREEN_MARGIN - visualWidth / 2;
-  const rawCenterY = top + LAUNCHER_SCREEN_MARGIN + visualHeight / 2;
-  const centerX = clamp(rawCenterX, left + LAUNCHER_SCREEN_MARGIN + visualWidth / 2, right - LAUNCHER_SCREEN_MARGIN - visualWidth / 2);
-  const centerY = clamp(rawCenterY, top + LAUNCHER_SCREEN_MARGIN + visualHeight / 2, bottom - LAUNCHER_SCREEN_MARGIN - visualHeight / 2);
-  await getCurrentWindow().setPosition(new LogicalPosition(centerX - width / 2, centerY - height / 2));
+  const center = visualCenterForTopRight(
+    scaledWorkArea(monitor),
+    { width: visualWidth, height: visualHeight },
+    LAUNCHER_SCREEN_MARGIN,
+  );
+  const position = windowPositionForVisualCenter(center, { width, height });
+  await getCurrentWindow().setPosition(new LogicalPosition(position.x, position.y));
 }
 
 async function positionLauncherFromAnchor(
@@ -2176,50 +2177,33 @@ async function positionLauncherFromAnchor(
 ) {
   const monitor = await primaryMonitor();
   if (!monitor) return;
-  const scale = monitor.scaleFactor || 1;
-  const work = monitor.workArea;
-  const left = work.position.x / scale;
-  const top = work.position.y / scale;
-  const right = (work.position.x + work.size.width) / scale;
-  const bottom = (work.position.y + work.size.height) / scale;
-  const rawCenterX = right - anchor.right;
-  const rawCenterY = bottom - anchor.bottom;
-  const centerX = clamp(rawCenterX, left + LAUNCHER_SCREEN_MARGIN + visualWidth / 2, right - LAUNCHER_SCREEN_MARGIN - visualWidth / 2);
-  const centerY = clamp(rawCenterY, top + LAUNCHER_SCREEN_MARGIN + visualHeight / 2, bottom - LAUNCHER_SCREEN_MARGIN - visualHeight / 2);
-  await getCurrentWindow().setPosition(new LogicalPosition(centerX - width / 2, centerY - height / 2));
+  const center = visualCenterFromAnchor(
+    scaledWorkArea(monitor),
+    anchor,
+    { width: visualWidth, height: visualHeight },
+    LAUNCHER_SCREEN_MARGIN,
+  );
+  const position = windowPositionForVisualCenter(center, { width, height });
+  await getCurrentWindow().setPosition(new LogicalPosition(position.x, position.y));
 }
 
 async function clampCurrentLauncherToWorkArea(visualWidth: number, visualHeight: number, margin: number) {
   if (!isTauri()) return false;
   const monitor = await primaryMonitor();
   if (!monitor) return false;
-  const scale = monitor.scaleFactor || 1;
-  const work = monitor.workArea;
+  const work = scaledWorkArea(monitor);
   const position = await getCurrentWindow().outerPosition();
   const size = await getCurrentWindow().outerSize();
-  const windowX = position.x / scale;
-  const windowY = position.y / scale;
-  const windowWidth = size.width / scale;
-  const windowHeight = size.height / scale;
-  const parkingLeft = windowX + (windowWidth - visualWidth) / 2;
-  const parkingTop = windowY + (windowHeight - visualHeight) / 2;
-  const parkingRight = parkingLeft + visualWidth;
-  const parkingBottom = parkingTop + visualHeight;
-  const allowedLeft = work.position.x / scale + margin;
-  const allowedTop = work.position.y / scale + margin;
-  const allowedRight = (work.position.x + work.size.width) / scale - margin;
-  const allowedBottom = (work.position.y + work.size.height) / scale - margin;
-  let dx = 0;
-  let dy = 0;
-
-  if (parkingLeft < allowedLeft) dx = allowedLeft - parkingLeft;
-  else if (parkingRight > allowedRight) dx = allowedRight - parkingRight;
-
-  if (parkingTop < allowedTop) dy = allowedTop - parkingTop;
-  else if (parkingBottom > allowedBottom) dy = allowedBottom - parkingBottom;
+  const windowRect = {
+    x: position.x / work.scale,
+    y: position.y / work.scale,
+    width: size.width / work.scale,
+    height: size.height / work.scale,
+  };
+  const { dx, dy } = clampParkingDelta(work, parkingRect(windowRect, { width: visualWidth, height: visualHeight }), margin);
 
   if (Math.abs(dx) <= 0.5 && Math.abs(dy) <= 0.5) return false;
-  await getCurrentWindow().setPosition(new LogicalPosition(windowX + dx, windowY + dy));
+  await getCurrentWindow().setPosition(new LogicalPosition(windowRect.x + dx, windowRect.y + dy));
   return true;
 }
 

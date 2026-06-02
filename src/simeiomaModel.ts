@@ -113,7 +113,7 @@ export function createInitialState(colorIndex: number): AppState {
   return {
     notes: [],
     launcher: { colorIndex, corner: "bottom-right" },
-    settings: DEFAULT_SETTINGS,
+    settings: { ...DEFAULT_SETTINGS },
   };
 }
 

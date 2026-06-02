@@ -909,6 +909,15 @@ function NoteWindow(props: { noteId: string }) {
     setState(latest);
   };
 
+  const activateEditorForPointer = (event: PointerEvent) => {
+    if (scribble() || event.button !== 0) return;
+    const target = event.target as HTMLElement;
+    const column = target.closest(".note-column");
+    if (!column || target.closest("button, input, select, .note-context-menu, .note-resize-handle")) return;
+    if (column.querySelector('[aria-label="Note right column"]')) setRightFocused(true);
+    else setBodyFocused(true);
+  };
+
   const growBody = async () => {
     const visibleEditors = [bodyRef, itemLayoutIsTwoColumn() ? rightBodyRef : undefined].filter(Boolean) as HTMLDivElement[];
     if (!visibleEditors.length) return;
@@ -1027,17 +1036,18 @@ function NoteWindow(props: { noteId: string }) {
 
           <div class="note-divider" />
 
-          <section class="note-body" classList={{ "is-two-column": item().layout === "two-column" }}>
+          <section
+            class="note-body"
+            classList={{ "is-two-column": item().layout === "two-column" }}
+            onPointerDown={activateEditorForPointer}
+          >
             <div class="note-columns" classList={{ "is-two-column": item().layout === "two-column" }}>
               <div class="note-column">
                 <div class="note-editor-stack" classList={{ "is-editing": bodyFocused() }}>
                   <div
                     class="note-body-preview"
                     classList={{ "is-empty": !bodyText().trim() }}
-                    onClick={() => {
-                      setBodyFocused(true);
-                      window.setTimeout(() => bodyRef?.focus(), 0);
-                    }}
+                    onClick={() => setBodyFocused(true)}
                   >
                     {renderMarkdownPreview(bodyText())}
                   </div>
@@ -1096,10 +1106,7 @@ function NoteWindow(props: { noteId: string }) {
                     <div
                       class="note-body-preview"
                       classList={{ "is-empty": !rightText().trim() }}
-                      onClick={() => {
-                        setRightFocused(true);
-                        window.setTimeout(() => rightBodyRef?.focus(), 0);
-                      }}
+                      onClick={() => setRightFocused(true)}
                     >
                       {renderMarkdownPreview(rightText())}
                     </div>
@@ -1960,16 +1967,9 @@ function shouldBlockNoteDrag(event: PointerEvent) {
   if (target.closest(".note-titlebar")) return Boolean(target.closest("button, .color-popover, .note-context-menu"));
   if (target.closest("textarea, input, .note-body-editor")) return true;
 
-  const preview = target.closest(".note-body-preview");
-  if (preview) return isPointerOverRenderedText(preview, event);
+  if (target.closest(".note-body-preview")) return true;
 
   return false;
-}
-
-function isPointerOverRenderedText(preview: Element, event: PointerEvent) {
-  const range = document.caretRangeFromPoint?.(event.clientX, event.clientY);
-  const node = range?.startContainer;
-  return Boolean(node && preview.contains(node) && node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
 }
 
 function toggleCurrentEditableLineStrike(editor: HTMLElement) {

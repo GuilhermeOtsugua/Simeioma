@@ -46,6 +46,18 @@ import {
   type Settings,
   type SketchStrokeRecord,
 } from "./simeiomaModel";
+import { renderMarkdownPreview } from "./markdownPreview";
+import { drawSketch, finishSketch, renderSketchRecord, startSketch, type SketchStroke } from "./sketch";
+import {
+  collapsedEditorEndRange,
+  currentEditorRange,
+  editablePlainText,
+  editableSelectionOffsets,
+  hasActiveTextSelection,
+  selectEditorRange,
+  setEditorSelectionOffsets,
+  syncEditableText,
+} from "./textSelection";
 import "./App.css";
 
 const STORAGE_KEY = "simeioma:v1";
@@ -2427,140 +2439,6 @@ function noteToMarkdown(note: Note) {
   return `# ${title}\n\n${left}\n`;
 }
 
-type MarkdownBlock =
-  | { type: "paragraph"; text: string }
-  | { type: "heading"; depth: number; text: string }
-  | { type: "task"; checked: boolean; text: string }
-  | { type: "bullet"; text: string }
-  | { type: "numbered"; marker: string; text: string }
-  | { type: "quote"; text: string }
-  | { type: "code"; text: string }
-  | { type: "hr" };
-
-function renderMarkdownPreview(value: string) {
-  const blocks = parseMarkdownBlocks(value);
-  if (!blocks.length) return <p class="placeholder-line">Write...</p>;
-  return <For each={blocks}>{renderMarkdownBlock}</For>;
-}
-
-function parseMarkdownBlocks(value: string): MarkdownBlock[] {
-  const blocks: MarkdownBlock[] = [];
-  const lines = value.split("\n");
-  let codeLines: string[] | null = null;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("```")) {
-      if (codeLines) {
-        blocks.push({ type: "code", text: codeLines.join("\n") });
-        codeLines = null;
-      } else {
-        codeLines = [];
-      }
-      continue;
-    }
-    if (codeLines) {
-      codeLines.push(line);
-      continue;
-    }
-    if (!trimmed) {
-      blocks.push({ type: "paragraph", text: "" });
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,6})\s+(.+)$/);
-    if (heading) {
-      blocks.push({ type: "heading", depth: heading[1].length, text: heading[2] });
-      continue;
-    }
-
-    const task = line.match(/^- \[( |x)\]\s+(.*)$/i);
-    if (task) {
-      blocks.push({ type: "task", checked: task[1].toLowerCase() === "x", text: task[2] });
-      continue;
-    }
-
-    const bullet = line.match(/^[-*+]\s+(.+)$/);
-    if (bullet) {
-      blocks.push({ type: "bullet", text: bullet[1] });
-      continue;
-    }
-
-    const numbered = line.match(/^(\d+[.)])\s+(.+)$/);
-    if (numbered) {
-      blocks.push({ type: "numbered", marker: numbered[1], text: numbered[2] });
-      continue;
-    }
-
-    const quote = line.match(/^>\s?(.*)$/);
-    if (quote) {
-      blocks.push({ type: "quote", text: quote[1] });
-      continue;
-    }
-
-    if (/^(-{3,}|_{3,}|\*{3,})$/.test(trimmed)) {
-      blocks.push({ type: "hr" });
-      continue;
-    }
-
-    blocks.push({ type: "paragraph", text: line });
-  }
-
-  if (codeLines) blocks.push({ type: "code", text: codeLines.join("\n") });
-  return blocks.filter((block, index, all) => block.type !== "paragraph" || block.text || index < all.length - 1);
-}
-
-function renderMarkdownBlock(block: MarkdownBlock) {
-  if (block.type === "heading") {
-    return <p class={`preview-heading h${Math.min(6, block.depth)}`}>{renderInlineMarkdown(block.text)}</p>;
-  }
-  if (block.type === "task") {
-    return (
-      <p class="preview-task" classList={{ "is-done": block.checked }}>
-        <span class="preview-checkbox" />
-        {renderInlineMarkdown(block.text || " ")}
-      </p>
-    );
-  }
-  if (block.type === "bullet") {
-    return <p class="preview-list"><span>•</span>{renderInlineMarkdown(block.text)}</p>;
-  }
-  if (block.type === "numbered") {
-    return <p class="preview-list"><span>{block.marker}</span>{renderInlineMarkdown(block.text)}</p>;
-  }
-  if (block.type === "quote") {
-    return <p class="preview-quote">{renderInlineMarkdown(block.text || " ")}</p>;
-  }
-  if (block.type === "code") {
-    return <pre class="preview-code-block"><code>{block.text || " "}</code></pre>;
-  }
-  if (block.type === "hr") {
-    return <hr class="preview-hr" />;
-  }
-  return <p>{renderInlineMarkdown(block.text || " ")}</p>;
-}
-
-function renderInlineMarkdown(value: string) {
-  const parts = value.split(/(\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~|`[^`]+`)/g).filter(Boolean);
-  return (
-    <For each={parts}>
-      {(part) => {
-        const link = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-        if (link) return <a class="preview-link" href={safeMarkdownHref(link[2])}>{link[1]}</a>;
-        if (part.startsWith("**") && part.endsWith("**")) return <strong>{part.slice(2, -2)}</strong>;
-        if (part.startsWith("*") && part.endsWith("*")) return <em>{part.slice(1, -1)}</em>;
-        if (part.startsWith("~~") && part.endsWith("~~")) return <s>{part.slice(2, -2)}</s>;
-        if (part.startsWith("`") && part.endsWith("`")) return <code>{part.slice(1, -1)}</code>;
-        return <span>{part}</span>;
-      }}
-    </For>
-  );
-}
-
-function safeMarkdownHref(href: string) {
-  return /^(https?:|mailto:|#)/i.test(href) ? href : "#";
-}
-
 function shouldBlockNoteDrag(event: PointerEvent) {
   const target = event.target as HTMLElement;
   if (target.closest("button, select, .color-popover, .note-context-menu, .mention-row, .note-resize-handle")) return true;
@@ -2577,85 +2455,6 @@ function isPointerOverRenderedText(preview: Element, event: PointerEvent) {
   const range = document.caretRangeFromPoint?.(event.clientX, event.clientY);
   const node = range?.startContainer;
   return Boolean(node && preview.contains(node) && node.nodeType === Node.TEXT_NODE && node.textContent?.trim());
-}
-
-function editablePlainText(editor: HTMLElement) {
-  return (editor.innerText || editor.textContent || "").replace(/\r\n/g, "\n");
-}
-
-function syncEditableText(editor: HTMLElement | undefined, text: string) {
-  if (!editor) return;
-  if (editablePlainText(editor) !== text) editor.textContent = text;
-}
-
-function currentEditorRange(editor: HTMLElement) {
-  const selection = window.getSelection();
-  if (!selection?.rangeCount || !selection.anchorNode || !selection.focusNode) return null;
-  if (!nodeInside(editor, selection.anchorNode) || !nodeInside(editor, selection.focusNode)) return null;
-  return selection.getRangeAt(0).cloneRange();
-}
-
-function collapsedEditorEndRange(editor: HTMLElement) {
-  const range = document.createRange();
-  range.selectNodeContents(editor);
-  range.collapse(false);
-  return range;
-}
-
-function selectEditorRange(range: Range) {
-  const selection = window.getSelection();
-  if (!selection) return;
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
-
-function nodeInside(root: HTMLElement, node: Node) {
-  return node === root || root.contains(node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement);
-}
-
-function hasActiveTextSelection(editor: HTMLElement | undefined) {
-  if (editor) {
-    const range = currentEditorRange(editor);
-    if (range && !range.collapsed) return true;
-  }
-  return Boolean(document.getSelection()?.toString());
-}
-
-function editableSelectionOffsets(editor: HTMLElement) {
-  const range = currentEditorRange(editor);
-  if (!range) return null;
-  const start = document.createRange();
-  start.selectNodeContents(editor);
-  start.setEnd(range.startContainer, range.startOffset);
-  const end = document.createRange();
-  end.selectNodeContents(editor);
-  end.setEnd(range.endContainer, range.endOffset);
-  return { start: start.toString().length, end: end.toString().length };
-}
-
-function setEditorSelectionOffsets(editor: HTMLElement, start: number, end: number) {
-  const range = document.createRange();
-  const from = editorTextPosition(editor, start);
-  const to = editorTextPosition(editor, end);
-  range.setStart(from.node, from.offset);
-  range.setEnd(to.node, to.offset);
-  selectEditorRange(range);
-}
-
-function editorTextPosition(editor: HTMLElement, offset: number) {
-  const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-  let remaining = Math.max(0, offset);
-  let last: Text | null = null;
-  while (walker.nextNode()) {
-    const node = walker.currentNode as Text;
-    last = node;
-    if (remaining <= node.data.length) return { node, offset: remaining };
-    remaining -= node.data.length;
-  }
-  if (last) return { node: last, offset: last.data.length };
-  const text = document.createTextNode("");
-  editor.appendChild(text);
-  return { node: text, offset: 0 };
 }
 
 function toggleCurrentEditableLineStrike(editor: HTMLElement) {
@@ -2800,126 +2599,6 @@ function maybeTriggerReminder(
   });
 }
 
-type SketchPoint = { x: number; y: number };
-type SketchStroke = { points: SketchPoint[]; last: SketchPoint; before: ImageData | null };
-type SketchShape =
-  | { type: "line"; start: SketchPoint; end: SketchPoint }
-  | { type: "circle"; center: SketchPoint; radius: number }
-  | { type: "rect"; x: number; y: number; width: number; height: number };
-
-function startSketch(event: PointerEvent, canvas: HTMLCanvasElement | undefined): SketchStroke | null {
-  if (!canvas) return null;
-  canvas.setPointerCapture(event.pointerId);
-  const point = canvasPoint(event, canvas);
-  const context = canvas.getContext("2d");
-  if (!context) return null;
-  const before = context.getImageData(0, 0, canvas.width, canvas.height);
-  configureSketchContext(context);
-  context.beginPath();
-  context.moveTo(point.x, point.y);
-  return { points: [point], last: point, before };
-}
-
-function drawSketch(event: PointerEvent, canvas: HTMLCanvasElement, stroke: SketchStroke) {
-  const point = canvasPoint(event, canvas);
-  stroke.points.push(point);
-  const mid = { x: (stroke.last.x + point.x) / 2, y: (stroke.last.y + point.y) / 2 };
-  const context = canvas.getContext("2d");
-  if (!context) return;
-  configureSketchContext(context);
-  context.quadraticCurveTo(stroke.last.x, stroke.last.y, mid.x, mid.y);
-  context.stroke();
-  stroke.last = point;
-}
-
-function finishSketch(canvas: HTMLCanvasElement, stroke: SketchStroke): SketchStrokeRecord {
-  const shape = detectSketchShape(stroke.points);
-  const record: SketchStrokeRecord = shape ?? { type: "freehand", points: stroke.points };
-  const context = canvas.getContext("2d");
-  if (!context) return record;
-  if (shape && stroke.before) {
-    context.putImageData(stroke.before, 0, 0);
-    renderSketchRecord(context, record);
-  }
-  return record;
-}
-
-function renderSketchRecord(context: CanvasRenderingContext2D, record: SketchStrokeRecord) {
-  configureSketchContext(context);
-  context.beginPath();
-  if (record.type === "line") {
-    context.moveTo(record.start.x, record.start.y);
-    context.lineTo(record.end.x, record.end.y);
-  } else if (record.type === "circle") {
-    context.arc(record.center.x, record.center.y, record.radius, 0, Math.PI * 2);
-  } else if (record.type === "rect") {
-    context.rect(record.x, record.y, record.width, record.height);
-  } else if (record.points.length) {
-    context.moveTo(record.points[0].x, record.points[0].y);
-    let last = record.points[0];
-    for (const point of record.points.slice(1)) {
-      const mid = { x: (last.x + point.x) / 2, y: (last.y + point.y) / 2 };
-      context.quadraticCurveTo(last.x, last.y, mid.x, mid.y);
-      last = point;
-    }
-  }
-  context.stroke();
-}
-
-function detectSketchShape(points: SketchPoint[]): SketchShape | null {
-  if (points.length < 4) return null;
-  const first = points[0];
-  const last = points.at(-1)!;
-  const length = strokeLength(points);
-  if (length < 18) return null;
-  const direct = distance(first, last);
-  const bounds = sketchBounds(points);
-  const width = bounds.maxX - bounds.minX;
-  const height = bounds.maxY - bounds.minY;
-
-  if (direct / length > 0.88) {
-    return { type: "line", start: first, end: last };
-  }
-
-  if (width < 14 || height < 14) return null;
-  const closed = direct < Math.max(width, height) * 0.28;
-  if (!closed || length < Math.max(width, height) * 2.1) return null;
-
-  const center = { x: bounds.minX + width / 2, y: bounds.minY + height / 2 };
-  const ratio = width / height;
-  if (ratio > 0.72 && ratio < 1.38) {
-    return { type: "circle", center, radius: Math.max(width, height) / 2 };
-  }
-  return { type: "rect", x: bounds.minX, y: bounds.minY, width, height };
-}
-
-function configureSketchContext(context: CanvasRenderingContext2D) {
-  context.lineWidth = 2;
-  context.lineCap = "round";
-  context.lineJoin = "round";
-  context.strokeStyle = "rgba(35, 31, 25, 0.76)";
-}
-
-function strokeLength(points: SketchPoint[]) {
-  return points.slice(1).reduce((sum, point, index) => sum + distance(points[index], point), 0);
-}
-
-function sketchBounds(points: SketchPoint[]) {
-  return points.reduce(
-    (bounds, point) => ({
-      minX: Math.min(bounds.minX, point.x),
-      minY: Math.min(bounds.minY, point.y),
-      maxX: Math.max(bounds.maxX, point.x),
-      maxY: Math.max(bounds.maxY, point.y),
-    }),
-    { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
-  );
-}
-
-function distance(a: SketchPoint, b: SketchPoint) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
 function keyCombo(event: KeyboardEvent) {
   const key = readableKey(event.key);
   if (!key) return "";
@@ -3014,14 +2693,6 @@ async function isLeftMouseDown() {
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
-function canvasPoint(event: PointerEvent, canvas: HTMLCanvasElement) {
-  const rect = canvas.getBoundingClientRect();
-  return {
-    x: ((event.clientX - rect.left) / rect.width) * canvas.width,
-    y: ((event.clientY - rect.top) / rect.height) * canvas.height,
-  };
 }
 
 function StarIcon() {

@@ -880,13 +880,7 @@ function NoteWindow(props: { noteId: string }) {
   });
 
   const patchNote = (patch: Partial<Note>) => {
-    const latest = loadState();
-    const notes = latest.notes.map((item) =>
-      item.id === props.noteId ? { ...item, ...patch, updatedAt: new Date().toISOString() } : item,
-    );
-    const next = { ...latest, notes };
-    saveState(next);
-    setState(next);
+    updateNote(props.noteId, (item) => ({ ...item, ...patch, updatedAt: new Date().toISOString() }), { setState });
   };
 
   const updateBodyText = (rawText: string) => {
@@ -1854,104 +1848,108 @@ function saveState(state: AppState, options: { broadcast?: boolean } = {}) {
   }
 }
 
+function updateState(
+  updater: (state: AppState) => AppState,
+  options: { broadcast?: boolean; setState?: (state: AppState) => void } = {},
+) {
+  const next = updater(loadState());
+  saveState(next, { broadcast: options.broadcast });
+  options.setState?.(next);
+  return next;
+}
+
+function updateNote(
+  noteId: string,
+  updater: (note: Note) => Note,
+  options: { broadcast?: boolean; setState?: (state: AppState) => void } = {},
+) {
+  return updateState(
+    (state) => ({
+      ...state,
+      notes: state.notes.map((note) => (note.id === noteId ? updater(note) : note)),
+    }),
+    options,
+  );
+}
+
 function persistLinePatch(noteId: string, lineId: string, patch: Partial<NoteLine>) {
-  const latest = loadState();
-  const next = {
-    ...latest,
-    notes: latest.notes.map((note) =>
-      note.id === noteId
-        ? {
-            ...note,
-            updatedAt: new Date().toISOString(),
-            lines: note.lines.map((line) => (line.id === lineId ? { ...line, ...patch } : line)),
-          }
-        : note,
-    ),
-  };
-  saveState(next, { broadcast: false });
+  updateNote(
+    noteId,
+    (note) => ({
+      ...note,
+      updatedAt: new Date().toISOString(),
+      lines: note.lines.map((line) => (line.id === lineId ? { ...line, ...patch } : line)),
+    }),
+    { broadcast: false },
+  );
 }
 
 function persistNoteBody(noteId: string, lineId: string, text: string) {
-  const latest = loadState();
-  const next = {
-    ...latest,
-    notes: latest.notes.map((note) =>
-      note.id === noteId
-        ? {
-            ...note,
-            updatedAt: new Date().toISOString(),
-            lines: [{ id: note.lines[0]?.id ?? lineId, text, task: false, crossed: false }],
-          }
-        : note,
-    ),
-  };
-  saveState(next, { broadcast: false });
+  updateNote(
+    noteId,
+    (note) => ({
+      ...note,
+      updatedAt: new Date().toISOString(),
+      lines: [{ id: note.lines[0]?.id ?? lineId, text, task: false, crossed: false }],
+    }),
+    { broadcast: false },
+  );
 }
 
 function persistNoteRightText(noteId: string, rightText: string) {
-  const latest = loadState();
-  const next = {
-    ...latest,
-    notes: latest.notes.map((note) =>
-      note.id === noteId
-        ? {
-            ...note,
-            rightText,
-            updatedAt: new Date().toISOString(),
-          }
-        : note,
-    ),
-  };
-  saveState(next, { broadcast: false });
+  updateNote(
+    noteId,
+    (note) => ({
+      ...note,
+      rightText,
+      updatedAt: new Date().toISOString(),
+    }),
+    { broadcast: false },
+  );
 }
 
 async function ensureDefaultExportPath(setState: (state: AppState) => void) {
   if (!isTauri()) return;
-  const latest = loadState();
-  if (latest.settings.exportPath) return;
-  const next = {
-    ...latest,
-    settings: {
-      ...latest.settings,
-      exportPath: await documentDir(),
-      copyAfterSave: true,
-    },
-  };
-  saveState(next);
-  setState(next);
+  if (loadState().settings.exportPath) return;
+  const exportPath = await documentDir();
+  updateState(
+    (state) => ({
+      ...state,
+      settings: {
+        ...state.settings,
+        exportPath,
+        copyAfterSave: true,
+      },
+    }),
+    { setState },
+  );
 }
 
 function resetDebugSessionState(setState?: (state: AppState) => void) {
-  const current = loadState();
-  const reset = {
-    ...resetNotesForDebug(current),
-    lastNoteSize: undefined,
-    settings: {
-      ...current.settings,
-      copyAfterSave: true,
-      remindersEnabled: true,
-    },
-  };
-  saveState(reset);
-  setState?.(reset);
+  updateState(
+    (state) => ({
+      ...resetNotesForDebug(state),
+      lastNoteSize: undefined,
+      settings: {
+        ...state.settings,
+        copyAfterSave: true,
+        remindersEnabled: true,
+      },
+    }),
+    { setState },
+  );
 }
 
 function markCurrentNoteViewed(noteId: string, setState?: (state: AppState) => void) {
-  const next = markNoteViewed(loadState(), noteId, new Date().toISOString());
-  saveState(next);
-  setState?.(next);
+  updateState((state) => markNoteViewed(state, noteId, new Date().toISOString()), { setState });
 }
 
 function persistNotePosition(noteId: string, position: { x: number; y: number }, setState?: (state: AppState) => void) {
-  const next = updateNotePosition(loadState(), noteId, position);
-  saveState(next);
-  setState?.(next);
+  updateState((state) => updateNotePosition(state, noteId, position), { setState });
 }
 
 function persistNoteSize(noteId: string, size: { width: number; height: number }, setState?: (state: AppState) => void) {
-  const next = updateNoteSize(loadState(), noteId, size);
-  saveState(next);
-  setState?.(next);
+  updateState((state) => updateNoteSize(state, noteId, size), { setState });
 }
 
 function createInitialState(): AppState {

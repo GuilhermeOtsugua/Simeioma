@@ -84,6 +84,7 @@ let launcherWasPlaced = false;
 let launcherIsConfiguring = false;
 let launcherConfigureRun = 0;
 let launcherUserDragging = false;
+let noteCreationQueue: Promise<void> = Promise.resolve();
 
 function App() {
   const params = new URLSearchParams(window.location.search);
@@ -198,20 +199,20 @@ function LauncherWindow() {
     }
   });
 
-  const createNote = async () => {
-    const latest = loadState();
-    const result = createNoteInState(latest, {
+  const createNote = () => enqueueNoteCreation(async () => {
+    const origin = await noteSpawnOrigin();
+    const result = createNoteInState(loadState(), {
       id: createId(),
       lineId: createId(),
       now: new Date().toISOString(),
-      origin: await noteSpawnOrigin(),
+      origin,
     });
     if (!result.note) return;
     saveState(result.state);
     setState(result.state);
 
     await openNoteWindow(result.note.id);
-  };
+  });
 
   const exportAll = async (format = state().settings.exportFormat) => {
     const latest = loadState();
@@ -600,7 +601,7 @@ function NoteWindow(props: { noteId: string }) {
     }
   });
 
-  const createNoteFromShortcut = async () => {
+  const createNoteFromShortcut = () => enqueueNoteCreation(async () => {
     const latest = loadState();
     const current = latest.notes.find((item) => item.id === props.noteId);
     const result = createNoteInState(latest, {
@@ -613,7 +614,7 @@ function NoteWindow(props: { noteId: string }) {
     saveState(result.state);
     setState(result.state);
     await openNoteWindow(result.note.id);
-  };
+  });
 
   const handleNoteKeyDown = (event: KeyboardEvent) => {
     const combo = keyCombo(event);
@@ -1376,6 +1377,11 @@ function saveState(state: AppState, options: { broadcast?: boolean } = {}) {
   if (options.broadcast !== false) {
     channel?.postMessage({ type: "state" });
   }
+}
+
+function enqueueNoteCreation(create: () => Promise<void>) {
+  noteCreationQueue = noteCreationQueue.then(create, create);
+  return noteCreationQueue;
 }
 
 function updateState(

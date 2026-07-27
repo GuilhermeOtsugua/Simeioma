@@ -1,3 +1,14 @@
+<p align="center">
+  <img src="docs/readme/banner.png" alt="Simeioma banner showing blue and yellow desktop post-it notes" width="100%">
+</p>
+
+<p align="center">
+  <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white">
+  <img alt="Solid and TypeScript" src="https://img.shields.io/badge/Solid-TypeScript-2C4F7C?logo=solid&logoColor=white">
+  <img alt="Local first" src="https://img.shields.io/badge/local--first-yes-6BAA75">
+  <img alt="License AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-blue">
+</p>
+
 # Simeioma
 
 Simeioma is a lightweight cross-platform desktop post-it app for short-lived

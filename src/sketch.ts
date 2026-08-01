@@ -1,7 +1,76 @@
 import type { SketchStrokeRecord } from "./simeiomaModel";
 
 export type SketchPoint = { x: number; y: number };
+export type SketchSample = SketchPoint & { time?: number };
+export type SmoothSketchOptions = {
+  minCutoff: number;
+  beta: number;
+  derivativeCutoff: number;
+  spacing: number;
+};
 export type SketchStroke = { points: SketchPoint[]; last: SketchPoint; before: ImageData | null };
+
+export const DEFAULT_SMOOTH_SKETCH_OPTIONS: SmoothSketchOptions = {
+  minCutoff: 1.35,
+  beta: 0.012,
+  derivativeCutoff: 1,
+  spacing: 4.4,
+};
+
+export function smoothSketchPoints(points: SketchSample[], options: SmoothSketchOptions = DEFAULT_SMOOTH_SKETCH_OPTIONS): SketchPoint[] {
+  if (points.length < 2) return points.map(({ x, y }) => ({ x, y }));
+
+  const filtered: SketchPoint[] = [{ x: points[0].x, y: points[0].y }];
+  let previousTime = points[0].time ?? 0;
+  let filteredVelocity = 0;
+
+  for (const point of points.slice(1)) {
+    const time = point.time ?? previousTime + 1000 / 60;
+    const deltaSeconds = Math.max((time - previousTime) / 1000, 1 / 240);
+    const previousRaw = points[filtered.length - 1];
+    const rawVelocity = distance(previousRaw, point) / deltaSeconds;
+    const derivativeAlpha = smoothingAlpha(options.derivativeCutoff, deltaSeconds);
+    filteredVelocity = derivativeAlpha * rawVelocity + (1 - derivativeAlpha) * filteredVelocity;
+    const alpha = smoothingAlpha(options.minCutoff + options.beta * filteredVelocity, deltaSeconds);
+    const previousFiltered = filtered.at(-1)!;
+    filtered.push({
+      x: alpha * point.x + (1 - alpha) * previousFiltered.x,
+      y: alpha * point.y + (1 - alpha) * previousFiltered.y,
+    });
+    previousTime = time;
+  }
+
+  return resampleSketchPoints(filtered, options.spacing, { x: points.at(-1)!.x, y: points.at(-1)!.y });
+}
+
+export function resampleSketchPoints(points: SketchPoint[], spacing: number, finalPoint = points.at(-1)): SketchPoint[] {
+  if (points.length < 2 || spacing <= 0) return points.map((point) => ({ ...point }));
+
+  const output = [{ ...points[0] }];
+  let previous = points[0];
+  let remaining = spacing;
+
+  for (const point of points.slice(1)) {
+    let segmentStart = previous;
+    let segmentLength = distance(segmentStart, point);
+    while (segmentLength >= remaining) {
+      const ratio = remaining / segmentLength;
+      const next = {
+        x: segmentStart.x + (point.x - segmentStart.x) * ratio,
+        y: segmentStart.y + (point.y - segmentStart.y) * ratio,
+      };
+      output.push(next);
+      segmentStart = next;
+      segmentLength = distance(segmentStart, point);
+      remaining = spacing;
+    }
+    remaining -= segmentLength;
+    previous = point;
+  }
+
+  if (finalPoint && distance(output.at(-1)!, finalPoint) > 0.001) output.push({ ...finalPoint });
+  return output;
+}
 type SketchShape =
   | { type: "line"; start: SketchPoint; end: SketchPoint }
   | { type: "circle"; center: SketchPoint; radius: number }
@@ -118,6 +187,11 @@ function sketchBounds(points: SketchPoint[]) {
 
 function distance(a: SketchPoint, b: SketchPoint) {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function smoothingAlpha(cutoff: number, deltaSeconds: number) {
+  const safeCutoff = Math.max(cutoff, 0.001);
+  return 1 / (1 + 1 / (2 * Math.PI * safeCutoff * deltaSeconds));
 }
 
 function canvasPoint(event: PointerEvent, canvas: HTMLCanvasElement) {

@@ -2,9 +2,10 @@ export type ReminderMode = "periodic" | "timeOfDay";
 export type ReminderTarget = "all" | "important" | "tasks" | "attention";
 export type ExportFormat = "txt" | "markdown" | "png" | "jpeg";
 export type NoteLayout = "single" | "two-column";
-export type SketchPointRecord = { x: number; y: number };
+export type SketchRenderingMode = "legacy" | "simeioma-adaptive" | "tomodachi-pixel";
+export type SketchPointRecord = { x: number; y: number; time?: number };
 export type SketchStrokeRecord =
-  | { type: "freehand"; points: SketchPointRecord[] }
+  | { type: "freehand"; points: SketchPointRecord[]; renderingMode?: SketchRenderingMode }
   | { type: "line"; start: SketchPointRecord; end: SketchPointRecord }
   | { type: "circle"; center: SketchPointRecord; radius: number }
   | { type: "rect"; x: number; y: number; width: number; height: number };
@@ -42,6 +43,7 @@ export type Settings = {
   copyNoteKeybind: string;
   newNoteKeybind: string;
   hideNotesKeybind: string;
+  sketchRenderingMode: SketchRenderingMode;
   reminderMode: ReminderMode;
   reminderValue: string;
   reminderTarget: ReminderTarget;
@@ -103,6 +105,7 @@ export const DEFAULT_SETTINGS: Settings = {
   copyNoteKeybind: "Ctrl + Shift + C",
   newNoteKeybind: "Ctrl + N",
   hideNotesKeybind: "Ctrl + Shift + H",
+  sketchRenderingMode: "simeioma-adaptive",
   reminderMode: "periodic",
   reminderValue: "1",
   reminderTarget: "attention",

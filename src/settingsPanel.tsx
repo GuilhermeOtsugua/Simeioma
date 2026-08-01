@@ -9,6 +9,7 @@ import {
   type ExportFormat,
   type ReminderMode,
   type ReminderTarget,
+  type SketchRenderingMode,
   type Settings,
 } from "./simeiomaModel";
 import { keyCombo, pointerCombo } from "./inputCombos";
@@ -75,6 +76,15 @@ export function SettingsPanel(props: { settings: Settings; onChange: (patch: Par
       <SettingKeybind label="Copy note" ariaLabel="Copy note keybind" value={props.settings.copyNoteKeybind} onCapture={() => setCapturingKeybind("copyNoteKeybind")} onReset={(event) => reset(event, { copyNoteKeybind: DEFAULT_SETTINGS.copyNoteKeybind })} />
       <SettingKeybind label="New note" ariaLabel="New note keybind" value={props.settings.newNoteKeybind} onCapture={() => setCapturingKeybind("newNoteKeybind")} onReset={(event) => reset(event, { newNoteKeybind: DEFAULT_SETTINGS.newNoteKeybind })} />
       <SettingKeybind label="Hide notes" ariaLabel="Hide notes keybind" value={props.settings.hideNotesKeybind} onCapture={() => setCapturingKeybind("hideNotesKeybind")} onReset={(event) => reset(event, { hideNotesKeybind: DEFAULT_SETTINGS.hideNotesKeybind })} />
+
+      <label class="setting-row">
+        <span>Sketch rendering</span>
+        <select aria-label="Sketch rendering" value={props.settings.sketchRenderingMode} onChange={(event) => props.onChange({ sketchRenderingMode: event.currentTarget.value as SketchRenderingMode })} onContextMenu={(event) => reset(event, { sketchRenderingMode: DEFAULT_SETTINGS.sketchRenderingMode })}>
+          <option value="legacy">Legacy</option>
+          <option value="simeioma-adaptive">Simeioma adaptive</option>
+          <option value="tomodachi-pixel">Tomodachi pixel</option>
+        </select>
+      </label>
 
       <label class="setting-row compact">
         <span>Reminders</span>

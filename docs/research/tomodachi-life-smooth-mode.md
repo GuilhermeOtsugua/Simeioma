@@ -77,13 +77,13 @@ A fixed filter either remains shaky or becomes noticeably late. A 1€ filter ho
   minCutoff: 1.35,       // Hz: calm slow movement
   beta: 0.012,           // opens the filter as px/s rises
   derivativeCutoff: 1.0, // Hz
-  spacing: 4.4,          // canonical-canvas px between dabs
+  spacing: 2.2,          // 384-unit logical-canvas px; avoids visible facets after note-scale expansion
 }
 ```
 
 ### D. Resample after filtering, then choose coverage deliberately
 
-Walk the filtered polyline and emit a point each 4–5 canonical pixels. Draw overlapping round caps or a round-join path through those points. `ctx.filter = "blur(...)"` is still incorrect: it softens the whole line, muddies intersections, and is not supported by the game reference.
+Walk the filtered polyline and emit a point each 2–3 logical pixels on Simeioma’s 384-unit canvas. This tighter spacing avoids visible facets when the logical bitmap fills a larger note. Draw overlapping round caps or a round-join path through those points. `ctx.filter = "blur(...)"` is still incorrect: it softens the whole line, muddies intersections, and is not supported by the game reference.
 
 The 60fps check creates two legitimate, separately named rendering choices:
 
@@ -92,7 +92,7 @@ The 60fps check creates two legitimate, separately named rendering choices:
 
 For the final style pass, tune these independently:
 
-- **geometry:** filter parameters and 4–5px spacing;
+- **geometry:** filter parameters and 2–3px logical spacing;
 - **brush:** width, opacity, colour, cap/join;
 - **edge:** hard/pixel or ordinary canvas antialiasing—never Gaussian blur;
 - **mode:** smooth/freehand only. Keep the existing recognised geometric shapes crisp.
@@ -107,7 +107,7 @@ Replace the ambiguous `sketchSmoothing` boolean/label with a persisted `sketchRe
 | `simeioma-adaptive` | Coalesced samples → candidate adaptive filter → fixed-distance resampling | Ordinary high-DPI canvas antialiasing | Simeioma’s refined, calm-ink product treatment. It is not a Nintendo reconstruction. |
 | `tomodachi-pixel` | The same candidate geometry pipeline, pending continuous-reference calibration | Opaque, pixel-aligned hard coverage; no blur and no deliberate soft edge | A controlled Tomodachi-inspired raster experiment. The source currently supports its edge treatment, not its filter or spacing. |
 
-All three modes must keep raw points as the persisted truth and must leave recognised lines, circles, and rectangles crisp.
+`Settings.sketchRenderingMode` selects the mode for **new** freehand strokes. Each new freehand record stamps that choice as `renderingMode`; a historic record without it resolves to `legacy`. This prevents a later settings change from altering existing note replay or export. All three modes keep raw points as persisted truth and leave recognised lines, circles, and rectangles crisp.
 
 ## Scope of work
 
@@ -127,7 +127,7 @@ All three modes must keep raw points as the persisted truth and must leave recog
 
 ### Slice 3 — named rendering modes behind an explicit setting
 
-- Add persisted `sketchRenderingMode: "legacy" | "simeioma-adaptive" | "tomodachi-pixel"`; migrate missing values to `legacy` so existing notes do not change silently.
+- Add persisted `sketchRenderingMode: "legacy" | "simeioma-adaptive" | "tomodachi-pixel"` as the default for new freehand strokes; stamp the selected `renderingMode` on each record and resolve missing historic values as `legacy`.
 - Apply modes only to freehand records. Keep recognised lines, circles, and rectangles as precise vector-like strokes.
 - Implement `tomodachi-pixel` as a hard-coverage renderer with pixel-aligned coordinates/dabs; do not quietly make it a blurred or anti-aliased variant.
 - Provide a small local debug fixture that draws the same recorded gesture in all three modes.

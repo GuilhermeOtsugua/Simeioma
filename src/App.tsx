@@ -42,7 +42,17 @@ import {
 } from "./simeiomaModel";
 import { keyCombo, matchesCombo, pointerCombo } from "./inputCombos";
 import { renderMarkdownPreview } from "./markdownPreview";
-import { drawSketch, finishSketch, renderSketchRecord, startSketch, type SketchStroke } from "./sketch";
+import {
+  clearSketchCanvas,
+  coalescedPointerEvents,
+  drawSketch,
+  finishSketch,
+  prepareSketchCanvas,
+  renderSketchRecord,
+  SKETCH_LOGICAL_SIZE,
+  startSketch,
+  type SketchStroke,
+} from "./sketch";
 import {
   collapsedEditorEndRange,
   currentEditorRange,
@@ -1171,15 +1181,17 @@ function NoteWindow(props: { noteId: string }) {
                   activeStroke = null;
                   return;
                 }
-                activeStroke = startSketch(event, canvasRef);
+                activeStroke = startSketch(event, canvasRef, loadState().settings.sketchRenderingMode);
               }}
               onPointerMove={(event) => {
                 if (!canvasRef || !activeStroke || (event.buttons & 1) === 0) return;
-                drawSketch(event, canvasRef, activeStroke);
+                for (const sample of coalescedPointerEvents(event)) drawSketch(sample, canvasRef, activeStroke);
               }}
               onPointerUp={(event) => {
                 if (event.button !== 0) return;
                 if (canvasRef && activeStroke) {
+                  for (const sample of coalescedPointerEvents(event)) drawSketch(sample, canvasRef, activeStroke);
+                  drawSketch(event, canvasRef, activeStroke);
                   const record = finishSketch(canvasRef, activeStroke);
                   if (record) saveSketchStroke(record);
                 }
@@ -1212,17 +1224,17 @@ function NoteWindow(props: { noteId: string }) {
   function hydrateCanvas() {
     const current = note();
     if (!canvasRef) return;
-    const context = canvasRef.getContext("2d");
+    const context = prepareSketchCanvas(canvasRef);
     if (!context) return;
-    context.clearRect(0, 0, canvasRef.width, canvasRef.height);
+    clearSketchCanvas(context);
     const renderStrokes = () => {
       for (const stroke of current?.sketchStrokes ?? []) renderSketchRecord(context, stroke);
     };
     if (current?.sketchData) {
       const image = new Image();
       image.onload = () => {
-        context.clearRect(0, 0, canvasRef!.width, canvasRef!.height);
-        context.drawImage(image, 0, 0, canvasRef!.width, canvasRef!.height);
+        clearSketchCanvas(context);
+        context.drawImage(image, 0, 0, SKETCH_LOGICAL_SIZE, SKETCH_LOGICAL_SIZE);
         renderStrokes();
       };
       image.src = current.sketchData;

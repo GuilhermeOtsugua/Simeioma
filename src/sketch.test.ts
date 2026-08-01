@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { smoothSketchPoints } from "./sketch";
+import { coalescedPointerEvents, resolveSketchRenderingMode, smoothSketchPoints } from "./sketch";
 
 describe("smoothSketchPoints", () => {
   test("resamples a freehand stroke at stable spacing and preserves both ends", () => {
@@ -40,5 +40,17 @@ describe("smoothSketchPoints", () => {
 
     expect(smoothSketchPoints(source, options)).toEqual(smoothSketchPoints(source, options));
     expect(smoothSketchPoints(source, options).at(-1)).toEqual({ x: 20, y: 20 });
+  });
+
+  test("uses coalesced pointer samples when the browser exposes them", () => {
+    const coalesced = [{ id: "first" }, { id: "second" }] as unknown as PointerEvent[];
+    const event = { getCoalescedEvents: () => coalesced } as unknown as PointerEvent;
+
+    expect(coalescedPointerEvents(event)).toEqual(coalesced);
+  });
+
+  test("preserves legacy rendering for freehand records created before modes existed", () => {
+    expect(resolveSketchRenderingMode({ type: "freehand", points: [] })).toBe("legacy");
+    expect(resolveSketchRenderingMode({ type: "freehand", points: [], renderingMode: "tomodachi-pixel" })).toBe("tomodachi-pixel");
   });
 });

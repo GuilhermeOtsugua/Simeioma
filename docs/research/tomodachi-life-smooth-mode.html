@@ -85,9 +85,9 @@
     </section>
 
     <h2>Recommended stroke pipeline</h2>
-    <div class="pipeline" role="img" aria-label="Raw samples are saved and recognized; filtered and resampled points are rendered">
-      <b>raw samples</b> → persistence + shape recognition<br>
-      <b>coalesced input</b> → speed-adaptive 1€ filter → 4–5px resampling<br>
+    <div class="pipeline" role="img" aria-label="Raw samples are saved; filtered and resampled points are rendered">
+      <b>raw samples</b> → persistence truth<br>
+      <b>coalesced input</b> → speed-adaptive 1€ filter → 2–3px logical resampling<br>
       <b>display geometry</b> → round caps / joins → normal canvas alpha coverage
     </div>
 
@@ -95,7 +95,7 @@
     <section class="scope">
       <article><strong>01 / PURE CORE</strong><p>Introduce deterministic filter/resampler helpers. Store raw data, replay the derived path, and protect line/circle/rectangle detection from filtering.</p></article>
       <article><strong>02 / LIVE INPUT</strong><p>Consume <code>getCoalescedEvents()</code> when available, batch display to <code>requestAnimationFrame</code>, and give the canvas an explicit device-pixel-ratio policy.</p></article>
-      <article><strong>03 / NAMED MODES</strong><p>Persist <code>legacy</code>, <code>simeioma-adaptive</code>, and <code>tomodachi-pixel</code>. Migrate missing values to legacy; reserve hard pixel coverage for the last mode.</p></article>
+      <article><strong>03 / NAMED MODES</strong><p>Persist <code>legacy</code>, <code>simeioma-adaptive</code>, and <code>tomodachi-pixel</code>. New gestures remain freehand; defer auto-shape conversion until it has explicit confirmation.</p></article>
       <article><strong>04 / CALIBRATION</strong><p>Use the inspected 60fps video for hard-coverage styling only. Find or capture a continuous high-frame-rate gesture before tuning filter strength, spacing, and latency.</p></article>
     </section>
 

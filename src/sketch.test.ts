@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { coalescedPointerEvents, resolveSketchRenderingMode, smoothSketchPoints } from "./sketch";
+import { coalescedPointerEvents, recordSketchStroke, resolveSketchRenderingMode, smoothSketchPoints } from "./sketch";
 
 describe("smoothSketchPoints", () => {
   test("resamples a freehand stroke at stable spacing and preserves both ends", () => {
@@ -47,6 +47,20 @@ describe("smoothSketchPoints", () => {
     const event = { getCoalescedEvents: () => coalesced } as unknown as PointerEvent;
 
     expect(coalescedPointerEvents(event)).toEqual(coalesced);
+  });
+
+  test("keeps line and circle-like gestures as freehand records", () => {
+    const lineLike = {
+      renderingMode: "simeioma-adaptive" as const,
+      points: [{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 40, y: 1 }, { x: 60, y: 1 }],
+    };
+    const circleLike = {
+      renderingMode: "tomodachi-pixel" as const,
+      points: [{ x: 20, y: 10 }, { x: 30, y: 20 }, { x: 20, y: 30 }, { x: 10, y: 20 }, { x: 20, y: 10 }],
+    };
+
+    expect(recordSketchStroke(lineLike)).toMatchObject({ type: "freehand", renderingMode: "simeioma-adaptive" });
+    expect(recordSketchStroke(circleLike)).toMatchObject({ type: "freehand", renderingMode: "tomodachi-pixel" });
   });
 
   test("preserves legacy rendering for freehand records created before modes existed", () => {

@@ -15,11 +15,6 @@ export type SketchStroke = {
   before: ImageData | null;
   renderingMode: SketchRenderingMode;
 };
-type SketchShape =
-  | { type: "line"; start: SketchPoint; end: SketchPoint }
-  | { type: "circle"; center: SketchPoint; radius: number }
-  | { type: "rect"; x: number; y: number; width: number; height: number };
-
 export const DEFAULT_SMOOTH_SKETCH_OPTIONS: SmoothSketchOptions = {
   minCutoff: 1.35,
   beta: 0.012,
@@ -146,20 +141,17 @@ export function drawSketch(event: PointerEvent, canvas: HTMLCanvasElement, strok
   stroke.last = point;
 }
 
-export function finishSketch(canvas: HTMLCanvasElement, stroke: SketchStroke): SketchStrokeRecord {
-  const shape = detectSketchShape(stroke.points);
-  const record: SketchStrokeRecord = shape ?? {
+export function recordSketchStroke(stroke: Pick<SketchStroke, "points" | "renderingMode">): Extract<SketchStrokeRecord, { type: "freehand" }> {
+  return {
     type: "freehand",
     points: stroke.points.map((point) => ({ ...point })),
     renderingMode: stroke.renderingMode,
   };
-  const context = prepareSketchCanvas(canvas);
-  if (!context) return record;
-  if (shape && stroke.before) {
-    context.putImageData(stroke.before, 0, 0);
-    renderSketchRecord(context, record);
-  }
-  return record;
+}
+
+export function finishSketch(canvas: HTMLCanvasElement, stroke: SketchStroke): SketchStrokeRecord {
+  prepareSketchCanvas(canvas);
+  return recordSketchStroke(stroke);
 }
 
 export function resolveSketchRenderingMode(record: Extract<SketchStrokeRecord, { type: "freehand" }>): SketchRenderingMode {
@@ -235,29 +227,6 @@ function drawPixelDab(context: CanvasRenderingContext2D, point: SketchPoint) {
   context.fillRect(Math.round(point.x) - 1, Math.round(point.y) - 1, 3, 3);
 }
 
-function detectSketchShape(points: SketchPoint[]): SketchShape | null {
-  if (points.length < 4) return null;
-  const first = points[0];
-  const last = points.at(-1)!;
-  const length = strokeLength(points);
-  if (length < 18) return null;
-  const direct = distance(first, last);
-  const bounds = sketchBounds(points);
-  const width = bounds.maxX - bounds.minX;
-  const height = bounds.maxY - bounds.minY;
-
-  if (direct / length > 0.88) return { type: "line", start: first, end: last };
-
-  if (width < 14 || height < 14) return null;
-  const closed = direct < Math.max(width, height) * 0.28;
-  if (!closed || length < Math.max(width, height) * 2.1) return null;
-
-  const center = { x: bounds.minX + width / 2, y: bounds.minY + height / 2 };
-  const ratio = width / height;
-  if (ratio > 0.72 && ratio < 1.38) return { type: "circle", center, radius: Math.max(width, height) / 2 };
-  return { type: "rect", x: bounds.minX, y: bounds.minY, width, height };
-}
-
 function configureSketchContext(context: CanvasRenderingContext2D) {
   const scale = context.canvas.width / SKETCH_LOGICAL_SIZE;
   context.setTransform(scale, 0, 0, scale, 0, 0);
@@ -265,22 +234,6 @@ function configureSketchContext(context: CanvasRenderingContext2D) {
   context.lineCap = "round";
   context.lineJoin = "round";
   context.strokeStyle = "rgba(35, 31, 25, 0.76)";
-}
-
-function strokeLength(points: SketchPoint[]) {
-  return points.slice(1).reduce((sum, point, index) => sum + distance(points[index], point), 0);
-}
-
-function sketchBounds(points: SketchPoint[]) {
-  return points.reduce(
-    (bounds, point) => ({
-      minX: Math.min(bounds.minX, point.x),
-      minY: Math.min(bounds.minY, point.y),
-      maxX: Math.max(bounds.maxX, point.x),
-      maxY: Math.max(bounds.maxY, point.y),
-    }),
-    { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
-  );
 }
 
 function distance(a: SketchPoint, b: SketchPoint) {

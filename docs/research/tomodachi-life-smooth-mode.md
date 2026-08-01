@@ -35,7 +35,7 @@ The 60fps check is summarised in [`media/tomodachi-60fps-findings.svg`](media/to
 - keeps every pointer event in `stroke.points`;
 - emits a quadratic segment from the previous point to the midpoint of the next two points;
 - renders the same midpoint construction when the note is rehydrated;
-- detects line/circle/rectangle intent from the **raw** points on pointer-up;
+- formerly detected line/circle/rectangle intent from the **raw** points on pointer-up; this conversion is now disabled because it visibly snaps completed strokes;
 - paints with a 2px, round-cap, round-join opaque-ish stroke.
 
 That midpoint recipe removes sharp corners, but it does **not** solve temporal jitter or sample-rate variation. A fast move with sparse events and a slow move with dense events get visibly different segment spacing. The current 384×384 bitmap is also CSS-scaled to the available note region, so it has no explicit device-pixel-ratio policy.
@@ -47,12 +47,12 @@ That midpoint recipe removes sharp corners, but it does **not** solve temporal j
 Maintain three streams during a stroke:
 
 ```text
-raw samples          → shape recognition + persistence truth
+raw samples          → persistence truth
 filtered samples     → transient drawing display
 resampled display    → deterministic replay / export rasterization
 ```
 
-Never feed filtered points into line/circle/rectangle detection. Filtering changes bounds, length, and closure ratios, which would make recognition inconsistent with what the user drew.
+Shape recognition is deferred. New strokes remain freehand until a future design can define accurate, non-surprising recognition and an explicit correction/confirmation interaction.
 
 ### B. Recover input samples before filtering
 
@@ -107,7 +107,11 @@ Replace the ambiguous `sketchSmoothing` boolean/label with a persisted `sketchRe
 | `simeioma-adaptive` | Coalesced samples → candidate adaptive filter → fixed-distance resampling | Ordinary high-DPI canvas antialiasing | Simeioma’s refined, calm-ink product treatment. It is not a Nintendo reconstruction. |
 | `tomodachi-pixel` | The same candidate geometry pipeline, pending continuous-reference calibration | Opaque, pixel-aligned hard coverage; no blur and no deliberate soft edge | A controlled Tomodachi-inspired raster experiment. The source currently supports its edge treatment, not its filter or spacing. |
 
-`Settings.sketchRenderingMode` selects the mode for **new** freehand strokes. Each new freehand record stamps that choice as `renderingMode`; a historic record without it resolves to `legacy`. This prevents a later settings change from altering existing note replay or export. All three modes keep raw points as persisted truth and leave recognised lines, circles, and rectangles crisp.
+`Settings.sketchRenderingMode` selects the mode for **new** freehand strokes. Each new freehand record stamps that choice as `renderingMode`; a historic record without it resolves to `legacy`. This prevents a later settings change from altering existing note replay or export. All new strokes remain freehand; historic line, circle, and rectangle records still replay accurately for compatibility.
+
+### Deferred: shape recognition
+
+Automatic line/circle/rectangle conversion is disabled. The old threshold-only recognizer was too inaccurate and caused a visibly sharp pointer-up snap. A future implementation needs a better confidence model plus an explicit user correction or confirmation path before it can be reintroduced. Follow-up: [#6 — Redesign sketch shape recognition before reactivation](https://github.com/GuilhermeOtsugua/Simeioma/issues/6).
 
 ## Scope of work
 
@@ -128,10 +132,10 @@ Replace the ambiguous `sketchSmoothing` boolean/label with a persisted `sketchRe
 ### Slice 3 — named rendering modes behind an explicit setting
 
 - Add persisted `sketchRenderingMode: "legacy" | "simeioma-adaptive" | "tomodachi-pixel"` as the default for new freehand strokes; stamp the selected `renderingMode` on each record and resolve missing historic values as `legacy`.
-- Apply modes only to freehand records. Keep recognised lines, circles, and rectangles as precise vector-like strokes.
+- Apply modes only to freehand records. New gestures never auto-convert; retain the precise renderer only for historic geometric records.
 - Implement `tomodachi-pixel` as a hard-coverage renderer with pixel-aligned coordinates/dabs; do not quietly make it a blurred or anti-aliased variant.
 - Provide a small local debug fixture that draws the same recorded gesture in all three modes.
-- **Acceptance:** user can select each named mode; undo, clear, export, restore, and shape recognition stay correct; reopening a legacy note keeps its existing appearance.
+- **Acceptance:** user can select each named mode; undo, clear, export, and restore stay correct; line-like and circle-like gestures remain freehand; reopening a legacy note keeps its existing appearance.
 
 ### Slice 4 — reference calibration and human sign-off
 
@@ -146,7 +150,7 @@ Replace the ambiguous `sketchSmoothing` boolean/label with a persisted `sketchRe
 - Do not claim an exact Nintendo algorithm without measured reference frames or source evidence.
 - Do not filter persisted truth only at live draw time; replay/export would diverge.
 - Do not use only a CSS/canvas blur to fake smoothness.
-- Do not apply a temporal filter to recognised geometric shapes.
+- Do not reintroduce automatic shape recognition without a dedicated refinement issue and an explicit user-confirmation interaction.
 - Do not make the default smoother until a user-facing A/B comparison is approved.
 
 ## Research media

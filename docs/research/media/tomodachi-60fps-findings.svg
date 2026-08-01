@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="500" viewBox="0 0 1080 500">
+  <style>
+    text { font-family: ui-monospace, "Cascadia Mono", monospace; }
+    .eyebrow { font-size: 15px; font-weight: 700; letter-spacing: .16em; }
+    .title { font-size: 32px; font-weight: 800; letter-spacing: -.04em; }
+    .label { font-size: 14px; font-weight: 800; letter-spacing: .08em; }
+    .copy { font-size: 14px; fill: #70675e; }
+    .time { font-size: 13px; fill: #876b4b; }
+  </style>
+  <rect width="1080" height="500" fill="#f6efe5"/>
+  <text x="40" y="44" class="eyebrow" fill="#a67c52">60 FPS REFERENCE CHECK / FACEPAINT TUTORIAL</text>
+  <text x="40" y="88" class="title" fill="#2e2923">The new evidence changes one part of the study.</text>
+  <rect x="40" y="122" width="1000" height="112" rx="16" fill="#fffaf1" stroke="#dfd3c3"/>
+  <text x="66" y="157" class="label" fill="#287967">CONFIRMED</text>
+  <text x="66" y="187" class="copy">“Smooth” is a selectable line option. The 720p60 source shows a curved, continuous-looking stroke.</text>
+  <text x="66" y="212" class="copy">At reference scale, its black edge reads as hard pixel coverage—not a soft canvas anti-alias.</text>
+  <rect x="40" y="252" width="1000" height="112" rx="16" fill="#fffaf1" stroke="#dfd3c3"/>
+  <text x="66" y="287" class="label" fill="#ba5664">NOT PROVEN</text>
+  <text x="66" y="317" class="copy">The curve appears nearly atomically in the tutorial between 02:11.70 and 02:11.88.</text>
+  <text x="66" y="342" class="copy">That edit/interaction does not expose pointer samples, lag, filter strength, or Nintendo’s spline implementation.</text>
+  <line x1="96" y1="415" x2="964" y2="415" stroke="#d7c8b5" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="440" cy="415" r="9" fill="#a67c52"/><circle cx="586" cy="415" r="9" fill="#ba5664"/>
+  <text x="350" y="452" class="time">02:11.70 — first large stroke change</text>
+  <text x="555" y="452" class="time">02:11.88 — settled in this edit</text>
+  <text x="40" y="484" class="copy">Source: cosmicstinggg, “Full Tutorial for Advanced Facepaint Mode” (YouTube, 720p60 stream), observed at 02:11.</text>
+</svg>

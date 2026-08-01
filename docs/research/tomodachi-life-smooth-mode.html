@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simeioma — smooth-mode study</title>
+  <style>
+    :root { color-scheme: light; --paper: #f6efe5; --ink: #2e2923; --muted: #70675e; --line: #dfd3c3; --accent: #287967; --warm: #a67c52; --panel: #fffaf1; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.6 ui-monospace, Cascadia Mono, SFMono-Regular, Consolas, monospace; }
+    main { width: min(1160px, calc(100% - 40px)); margin: 0 auto; padding: 64px 0 92px; }
+    .eyebrow { margin: 0 0 16px; color: var(--warm); font-size: 13px; font-weight: 800; letter-spacing: .16em; }
+    h1 { max-width: 940px; margin: 0; font-size: clamp(34px, 6vw, 68px); line-height: .98; letter-spacing: -.07em; }
+    .lede { max-width: 830px; margin: 28px 0 0; color: var(--muted); font-size: clamp(16px, 2vw, 20px); }
+    .decision { display: grid; grid-template-columns: auto 1fr; gap: 14px; max-width: 900px; margin: 42px 0 52px; padding: 20px 22px; border-left: 5px solid var(--accent); background: color-mix(in srgb, var(--panel), transparent 15%); }
+    .decision strong { color: var(--accent); letter-spacing: .08em; }
+    .decision p { margin: 0; }
+    h2 { margin: 76px 0 22px; font-size: 24px; line-height: 1.15; letter-spacing: -.04em; }
+    h3 { margin: 0; font-size: 15px; letter-spacing: .06em; }
+    .media { overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: #1d1b18; box-shadow: 0 18px 55px rgba(55, 37, 15, .12); }
+    .media video, .media img { display: block; width: 100%; height: auto; }
+    .caption { margin: 0; padding: 14px 16px; background: var(--panel); color: var(--muted); font-size: 13px; }
+    .compare { display: grid; grid-template-columns: 1.35fr .65fr; gap: 18px; align-items: start; }
+    .compare .media:nth-child(2) { background: var(--panel); }
+    .compare .media:nth-child(2) img { image-rendering: auto; }
+    .claims { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--line); }
+    .claim { min-height: 170px; padding: 22px; background: var(--panel); }
+    .claim span { display: block; margin-bottom: 14px; color: var(--accent); font-size: 13px; font-weight: 800; letter-spacing: .1em; }
+    .claim p { margin: 0; color: var(--muted); font-size: 14px; }
+    .pipeline { margin: 26px 0 0; padding: 24px; overflow-x: auto; border-radius: 16px; background: #27221d; color: #f9f1e5; font-size: 15px; line-height: 2; }
+    .pipeline b { color: #7ed1bb; }
+    .scope { display: grid; gap: 2px; overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: var(--line); }
+    .scope article { display: grid; grid-template-columns: 132px 1fr; gap: 24px; padding: 22px; background: var(--panel); }
+    .scope strong { color: var(--warm); font-size: 13px; letter-spacing: .08em; }
+    .scope p { margin: 0; color: var(--muted); }
+    .caveat { margin-top: 46px; padding: 20px 22px; border: 1px dashed #bba990; border-radius: 14px; color: var(--muted); font-size: 14px; }
+    code { padding: .12em .35em; border-radius: 4px; background: #eee4d7; color: #47372a; }
+    a { color: var(--accent); text-underline-offset: 3px; }
+    @media (max-width: 760px) { main { width: min(100% - 28px, 1160px); padding-top: 36px; } .compare, .claims { grid-template-columns: 1fr; } .scope article { grid-template-columns: 1fr; gap: 7px; } h2 { margin-top: 56px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">SIMEIOMA / SKETCH RESEARCH / 2026-07-24</p>
+    <h1>Tomodachi-inspired smooth ink, without the mush.</h1>
+    <p class="lede">A 720p60 Facepaint reference refined the finding: smooth geometry does not imply a soft raster edge. The game reference reads as hard pixel coverage—not blur.</p>
+
+    <section class="decision" aria-label="research decision">
+      <strong>DECISION</strong>
+      <p>Keep adaptive filtering and fixed-distance resampling as a Simeioma feel candidate. Treat hard Tomodachi-like coverage and softened canvas coverage as separate, explicit rendering modes.</p>
+    </section>
+
+    <h2>New 60fps reference: one finding confirmed, one overturned.</h2>
+    <section class="compare" aria-label="60fps reference findings">
+      <figure class="media">
+        <img src="media/tomodachi-60fps-findings.svg" alt="Findings from the 60fps Facepaint reference: Smooth is explicit, coverage is hard, temporal smoothing is not proven">
+        <figcaption class="caption">Observed source: <a href="https://www.youtube.com/watch?v=9H5zd5R2avA&amp;t=131s">cosmicstinggg’s Facepaint tutorial at 02:11</a>. Verified stream: 1280×720 at 60fps.</figcaption>
+      </figure>
+      <aside class="decision">
+        <strong>REVISION</strong>
+        <p>The source confirms a selectable <em>Smooth</em> line option and visually hard stroke coverage. The large curve appears between 02:11.70 and 02:11.88, so it cannot reveal Nintendo’s input filter, spline, or brush-spacing algorithm.</p>
+      </aside>
+    </section>
+
+    <h2>The Simeioma study remains useful—but is no longer presented as a raster match.</h2>
+    <section class="compare" aria-label="smoothing comparison media">
+      <figure class="media">
+        <video autoplay muted loop playsinline controls poster="media/tomodachi-smoothing-comparison.png">
+          <source src="media/tomodachi-smoothing-comparison.mp4" type="video/mp4">
+          <img src="media/tomodachi-smoothing-comparison.gif" alt="Animated smoothing comparison">
+        </video>
+        <figcaption class="caption">MP4 · 3.5 seconds · 24 fps. The final green row is the proposed Simeioma adaptive-smoothing study—not a claim of Nintendo raster fidelity.</figcaption>
+      </figure>
+      <figure class="media">
+        <img src="media/tomodachi-smoothing-comparison.gif" alt="Looping GIF of raw, current, and target smoothing">
+        <figcaption class="caption">GIF fallback. Both visuals are original reconstructions, not Nintendo footage.</figcaption>
+      </figure>
+    </section>
+
+    <h2>What the evidence actually supports</h2>
+    <section class="claims">
+      <article class="claim"><span>OBSERVED AT 60FPS</span><p>Facepaint exposes Smooth as a line option. Its curve appears continuous but its black edge reads as hard, pixel-stepped coverage.</p></article>
+      <article class="claim"><span>TECHNICAL</span><p>Pointer samples can arrive coalesced. Input stability, path geometry, dab spacing, and raster coverage must be designed separately.</p></article>
+      <article class="claim"><span>HONEST LIMIT</span><p>The source cut does not show the live stroke growing continuously. It cannot prove a 1€ filter, a spline family, or exact stroke spacing.</p></article>
+    </section>
+
+    <h2>Recommended stroke pipeline</h2>
+    <div class="pipeline" role="img" aria-label="Raw samples are saved and recognized; filtered and resampled points are rendered">
+      <b>raw samples</b> → persistence + shape recognition<br>
+      <b>coalesced input</b> → speed-adaptive 1€ filter → 4–5px resampling<br>
+      <b>display geometry</b> → round caps / joins → normal canvas alpha coverage
+    </div>
+
+    <h2>Scope for the implementation pass</h2>
+    <section class="scope">
+      <article><strong>01 / PURE CORE</strong><p>Introduce deterministic filter/resampler helpers. Store raw data, replay the derived path, and protect line/circle/rectangle detection from filtering.</p></article>
+      <article><strong>02 / LIVE INPUT</strong><p>Consume <code>getCoalescedEvents()</code> when available, batch display to <code>requestAnimationFrame</code>, and give the canvas an explicit device-pixel-ratio policy.</p></article>
+      <article><strong>03 / NAMED MODES</strong><p>Persist <code>legacy</code>, <code>simeioma-adaptive</code>, and <code>tomodachi-pixel</code>. Migrate missing values to legacy; reserve hard pixel coverage for the last mode.</p></article>
+      <article><strong>04 / CALIBRATION</strong><p>Use the inspected 60fps video for hard-coverage styling only. Find or capture a continuous high-frame-rate gesture before tuning filter strength, spacing, and latency.</p></article>
+    </section>
+
+    <p class="caveat">Read the full research record, 60fps source analysis, parameter rationale, non-goals, and regeneration commands in <a href="tomodachi-life-smooth-mode.md">tomodachi-life-smooth-mode.md</a>. The research materials make no claim that Nintendo uses the shown filter; that requires a continuous measured reference gesture or source evidence.</p>
+  </main>
+</body>
+</html>

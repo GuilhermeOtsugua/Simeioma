@@ -757,6 +757,101 @@ svg {
   pointer-events: none;
 }
 
+.markdown-editor {
+  min-height: 100%;
+  padding-right: 0;
+}
+
+.markdown-editor:empty::before {
+  content: attr(data-placeholder);
+  color: color-mix(in srgb, var(--note-ink), transparent 62%);
+  pointer-events: none;
+}
+
+.markdown-editor-line {
+  min-height: 18px;
+  margin: 0 0 5px;
+}
+
+.markdown-editor-line:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-editor-line.is-heading {
+  margin-top: 2px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.markdown-editor-line.is-heading.h1 {
+  font-size: 18px;
+}
+
+.markdown-editor-line.is-heading.h2 {
+  font-size: 16px;
+}
+
+.markdown-editor-line.is-heading.h3,
+.markdown-editor-line.is-heading.h4,
+.markdown-editor-line.is-heading.h5,
+.markdown-editor-line.is-heading.h6 {
+  font-size: 14px;
+}
+
+.markdown-editor-line.is-list,
+.markdown-editor-line.is-task {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 3px;
+}
+
+.markdown-editor-list-marker {
+  color: color-mix(in srgb, var(--note-ink), transparent 24%);
+  user-select: none;
+}
+
+.markdown-editor-task-box {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border: 1px solid color-mix(in srgb, var(--note-ink), transparent 46%);
+  border-radius: 5px;
+}
+
+.markdown-editor-line.is-task.is-done {
+  color: color-mix(in srgb, var(--note-ink), transparent 38%);
+  text-decoration: line-through;
+}
+
+.markdown-editor-line.is-quote {
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--note-ink), transparent 56%);
+  color: color-mix(in srgb, var(--note-ink), transparent 18%);
+}
+
+.markdown-editor-line.is-rule {
+  min-height: 1px;
+  margin: 8px 0;
+  background: color-mix(in srgb, var(--note-line), #000 8%);
+}
+
+.markdown-editor-token.is-source {
+  color: color-mix(in srgb, var(--note-ink), transparent 16%);
+}
+
+.markdown-editor-token code {
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--note-bg), #000 7%);
+}
+
+.markdown-editor-token a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
 .note-body-preview {
   max-width: 100%;
   min-height: 22px;

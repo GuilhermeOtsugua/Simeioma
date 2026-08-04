@@ -522,6 +522,15 @@ svg {
   color: #fffaf0;
 }
 
+.brush-size-picker {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.brush-size-picker button {
+  min-height: 30px;
+  font-size: 11px;
+}
+
 .reminder-toast {
   position: absolute;
   left: 50%;

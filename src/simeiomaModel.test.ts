@@ -36,6 +36,10 @@ describe("Simeioma model", () => {
     expect(DEFAULT_SETTINGS.sketchRenderingMode).toBe("simeioma-adaptive");
   });
 
+  test("defaults new freehand strokes to the normal brush width", () => {
+    expect(DEFAULT_SETTINGS.sketchBrushSize).toBe("default");
+  });
+
   test("formats periodic reminder values as short human labels", () => {
     expect(periodicLabel("0.5")).toBe("Every 30min");
     expect(periodicLabel("1")).toBe("Every 1h");

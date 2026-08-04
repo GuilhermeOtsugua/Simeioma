@@ -2,6 +2,7 @@ import { createEffect, onCleanup, onMount, type JSX } from "solid-js";
 import {
   applyMarkdownEdit,
   markdownTokens,
+  moveCaretAcrossInlineToken,
   nextGraphemeBoundary,
   previousGraphemeBoundary,
   wrapSelectionWithStrikethrough,
@@ -44,6 +45,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   let source = props.value;
   let selection: SourceSelection = { start: source.length, end: source.length };
   let composing = false;
+  let isFocused = false;
   let compositionHistoryRecorded = false;
   let renderedSource = "";
   let renderedSelection = "";
@@ -209,8 +211,14 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   };
 
   const sourceOffsetForDomPosition = (node: Node, offset: number): number | null => {
+    const element = node.nodeType === Node.ELEMENT_NODE ? node as HTMLElement : null;
+    if (element?.classList.contains("markdown-editor-line")) {
+      const next = element.childNodes[offset];
+      const previous = element.childNodes[offset - 1];
+      return sourceOffsetAtStart(next) ?? sourceOffsetAtEnd(previous) ?? Number(element.dataset.sourceTo);
+    }
     const text = node.nodeType === Node.TEXT_NODE ? node as Text : null;
-    const sourceNode = (text?.parentElement ?? (node as Element).closest?.("[data-source-from]")) as HTMLElement | null;
+    const sourceNode = (text?.parentElement ?? element?.closest("[data-source-from]")) as HTMLElement | null;
     if (sourceNode?.dataset.sourceFrom) {
       const from = Number(sourceNode.dataset.sourceFrom);
       const to = Number(sourceNode.dataset.sourceTo);
@@ -225,9 +233,36 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     return offset <= 0 ? from : to;
   };
 
+  const sourceOffsetAtStart = (node: Node | undefined): number | null => {
+    if (!node) return null;
+    if (node instanceof HTMLElement) {
+      if (node.dataset.tokenFrom) return Number(node.dataset.tokenFrom);
+      if (node.dataset.sourceFrom) return Number(node.dataset.sourceFrom);
+      for (const child of node.childNodes) {
+        const offset = sourceOffsetAtStart(child);
+        if (offset !== null) return offset;
+      }
+    }
+    return null;
+  };
+
+  const sourceOffsetAtEnd = (node: Node | undefined): number | null => {
+    if (!node) return null;
+    if (node instanceof HTMLElement) {
+      if (node.dataset.tokenTo) return Number(node.dataset.tokenTo);
+      if (node.dataset.sourceTo) return Number(node.dataset.sourceTo);
+      for (let index = node.childNodes.length - 1; index >= 0; index -= 1) {
+        const offset = sourceOffsetAtEnd(node.childNodes[index]);
+        if (offset !== null) return offset;
+      }
+    }
+    return null;
+  };
+
   const refreshPresentationForSelection = () => {
     activeTokenStarts = new Set();
     activeLineIndexes = new Set();
+    if (!isFocused) return;
     const isCollapsed = selection.start === selection.end;
     for (const token of markdownTokens(source)) {
       const selected = isCollapsed
@@ -259,6 +294,16 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   };
 
   const domPositionForSourceOffset = (offset: number) => {
+    const tokenEnd = [...element.querySelectorAll<HTMLElement>("[data-token-to]")]
+      .find((item) => Number(item.dataset.tokenTo) === offset);
+    if (tokenEnd?.parentNode) {
+      return { node: tokenEnd.parentNode, offset: [...tokenEnd.parentNode.childNodes].indexOf(tokenEnd) + 1 };
+    }
+    const tokenStart = [...element.querySelectorAll<HTMLElement>("[data-token-from]")]
+      .find((item) => Number(item.dataset.tokenFrom) === offset);
+    if (tokenStart?.parentNode) {
+      return { node: tokenStart.parentNode, offset: [...tokenStart.parentNode.childNodes].indexOf(tokenStart) };
+    }
     const spans = [...element.querySelectorAll<HTMLElement>("span[data-source-from]")];
     const span = spans.find((item) => {
       const from = Number(item.dataset.sourceFrom);
@@ -392,6 +437,17 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   };
 
   const handleKeyDown: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
+    if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      rememberSelection();
+      const next = moveCaretAcrossInlineToken(source, selection, event.key === "ArrowLeft" ? "left" : "right");
+      if (next) {
+        event.preventDefault();
+        selection = next;
+        renderedSource = "";
+        render();
+        return;
+      }
+    }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
       event.preventDefault();
       if (event.shiftKey) redo();
@@ -419,7 +475,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   };
 
   const handleSelectionChange = () => {
-    if (document.activeElement !== element) return;
+    if (!isFocused || document.activeElement !== element) return;
     rememberSelection();
   };
 
@@ -472,6 +528,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
 
   onMount(() => {
     source = props.value;
+    isFocused = document.activeElement === element;
     selection = { start: source.length, end: source.length };
     renderedSource = "";
     render(false);
@@ -517,11 +574,16 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
         render();
       }}
       onFocus={() => {
+        isFocused = true;
         rememberSelection();
         props.onFocus?.();
+        renderedSource = "";
         render();
       }}
       onBlur={() => {
+        isFocused = false;
+        renderedSource = "";
+        render(false);
         props.onBlur?.();
       }}
     />

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   applyMarkdownEdit,
   markdownTokens,
+  moveCaretAcrossInlineToken,
   previousGraphemeBoundary,
   wrapSelectionWithStrikethrough,
 } from "./markdownEditorModel";
@@ -36,6 +37,20 @@ describe("Markdown editor model", () => {
   test("inserts empty strikethrough markers when no text is selected", () => {
     expect(wrapSelectionWithStrikethrough("Plan", { start: 4, end: 4 }))
       .toEqual({ value: "Plan~~~~", selection: { start: 6, end: 6 } });
+  });
+
+  test("moves one visual step out of inline Markdown wrappers", () => {
+    const value = "Before **bold** after ~~done~~";
+    expect(moveCaretAcrossInlineToken(value, { start: 13, end: 13 }, "right"))
+      .toEqual({ start: 15, end: 15 });
+    expect(moveCaretAcrossInlineToken(value, { start: 24, end: 24 }, "left"))
+      .toEqual({ start: 22, end: 22 });
+  });
+
+  test("does not hijack non-boundary or range selection navigation", () => {
+    const value = "**bold**";
+    expect(moveCaretAcrossInlineToken(value, { start: 3, end: 3 }, "right")).toBeNull();
+    expect(moveCaretAcrossInlineToken(value, { start: 2, end: 4 }, "right")).toBeNull();
   });
 
   test("deletes complete graphemes rather than splitting an emoji sequence", () => {

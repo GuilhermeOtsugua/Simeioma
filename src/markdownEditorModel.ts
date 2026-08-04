@@ -21,6 +21,20 @@ export function markdownTokens(value: string, offset = 0): MarkdownToken[] {
   return tokens;
 }
 
+export function moveCaretAcrossInlineToken(
+  value: string,
+  selection: SourceSelection,
+  direction: "left" | "right",
+): SourceSelection | null {
+  if (selection.start !== selection.end) return null;
+  const caret = selection.start;
+  for (const token of markdownTokens(value)) {
+    if (direction === "right" && caret === token.contentTo) return { start: token.to, end: token.to };
+    if (direction === "left" && caret === token.contentFrom) return { start: token.from, end: token.from };
+  }
+  return null;
+}
+
 export function applyMarkdownEdit(value: string, selection: SourceSelection, insertedText: string) {
   const range = normalizeSelection(value, selection);
   const next = `${value.slice(0, range.start)}${insertedText}${value.slice(range.end)}`;

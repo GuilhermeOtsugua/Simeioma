@@ -9,6 +9,7 @@ import {
   type ExportFormat,
   type ReminderMode,
   type ReminderTarget,
+  type SketchBrushSize,
   type SketchRenderingMode,
   type Settings,
 } from "./simeiomaModel";
@@ -85,6 +86,22 @@ export function SettingsPanel(props: { settings: Settings; onChange: (patch: Par
           <option value="tomodachi-pixel">Tomodachi pixel</option>
         </select>
       </label>
+
+      <div class="setting-row" onContextMenu={(event) => reset(event, { sketchBrushSize: DEFAULT_SETTINGS.sketchBrushSize })}>
+        <span>Brush</span>
+        <div class="segmented brush-size-picker" role="group" aria-label="Sketch brush size">
+          {(["thin", "default", "thick"] as SketchBrushSize[]).map((size) => (
+            <button
+              type="button"
+              class={props.settings.sketchBrushSize === size ? "is-active" : ""}
+              aria-pressed={props.settings.sketchBrushSize === size}
+              onClick={() => props.onChange({ sketchBrushSize: size })}
+            >
+              {size === "default" ? "Default" : size[0].toUpperCase() + size.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <label class="setting-row compact">
         <span>Reminders</span>

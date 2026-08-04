@@ -26,6 +26,7 @@ import {
   isReminderDue,
   markNoteViewed,
   reminderNotes,
+  removeNoteFromState,
   resetNotesForDebug,
   unviewedReminderCount,
   unviewedReminderNotes,
@@ -49,7 +50,6 @@ import {
   finishSketch,
   prepareSketchCanvas,
   renderSketchRecord,
-  SKETCH_LOGICAL_SIZE,
   startSketch,
   type SketchStroke,
 } from "./sketch";
@@ -537,7 +537,7 @@ function NotesListWindow() {
 
   const deleteNote = async (id: string) => {
     const latest = loadState();
-    const next = { ...latest, notes: latest.notes.filter((note) => note.id !== id) };
+    const next = removeNoteFromState(latest, id);
     saveState(next);
     setState(next);
     const noteWindow = await WebviewWindow.getByLabel(noteLabel(id));
@@ -576,6 +576,7 @@ function NoteWindow(props: { noteId: string }) {
   let bodyRef: HTMLDivElement | undefined;
   let rightBodyRef: HTMLDivElement | undefined;
   let activeStroke: SketchStroke | null = null;
+  let canvasRedrawFrame: number | undefined;
   let noteDragTimer: number | undefined;
   let notePointerDownAt: { x: number; y: number } | null = null;
   let resizingNote = false;
@@ -668,6 +669,11 @@ function NoteWindow(props: { noteId: string }) {
     markCurrentNoteViewed(props.noteId, setState);
     focusFirstLine();
     hydrateCanvas();
+    const canvasForResize = canvasRef;
+    const canvasResizeObserver = typeof ResizeObserver === "undefined" || !canvasForResize
+      ? undefined
+      : new ResizeObserver(() => scheduleCanvasHydration());
+    if (canvasResizeObserver && canvasForResize) canvasResizeObserver.observe(canvasForResize);
     let movedUnlisten: (() => void) | undefined;
     let resizedUnlisten: (() => void) | undefined;
     let focusUnlisten: (() => void) | undefined;
@@ -700,6 +706,7 @@ function NoteWindow(props: { noteId: string }) {
         movedUnlisten = unlisten;
       });
       getCurrentWindow().onResized(({ payload }) => {
+        scheduleCanvasHydration();
         window.clearTimeout(sizeSaveTimer);
         sizeSaveTimer = window.setTimeout(async () => {
           const scale = (await primaryMonitor())?.scaleFactor || 1;
@@ -729,6 +736,8 @@ function NoteWindow(props: { noteId: string }) {
       window.removeEventListener("keydown", handleNoteKeyDown);
       window.removeEventListener("pointerdown", closePaletteOnOutsidePointer, true);
       window.clearTimeout(noteDragTimer);
+      if (canvasRedrawFrame !== undefined) window.cancelAnimationFrame(canvasRedrawFrame);
+      canvasResizeObserver?.disconnect();
       window.clearTimeout(moveSaveTimer);
       window.clearTimeout(sizeSaveTimer);
       movedUnlisten?.();
@@ -898,6 +907,13 @@ function NoteWindow(props: { noteId: string }) {
     updateNote(props.noteId, (item) => ({ ...item, ...patch, updatedAt: new Date().toISOString() }), { setState });
   };
 
+  const deleteCurrentNote = async () => {
+    const next = removeNoteFromState(loadState(), props.noteId);
+    saveState(next);
+    setState(next);
+    await closeCurrentWindow();
+  };
+
   const updateBodyText = (rawText: string) => {
     const current = note();
     if (!current) return;
@@ -1040,6 +1056,13 @@ function NoteWindow(props: { noteId: string }) {
                 >
                   Close
                 </button>
+                <button
+                  type="button"
+                  class="note-menu-action delete-action"
+                  onClick={() => void deleteCurrentNote()}
+                >
+                  Delete note
+                </button>
               </div>
             </Show>
           </header>
@@ -1181,7 +1204,8 @@ function NoteWindow(props: { noteId: string }) {
                   activeStroke = null;
                   return;
                 }
-                activeStroke = startSketch(event, canvasRef, loadState().settings.sketchRenderingMode);
+                const settings = loadState().settings;
+                activeStroke = startSketch(event, canvasRef, settings.sketchRenderingMode, settings.sketchBrushSize);
               }}
               onPointerMove={(event) => {
                 if (!canvasRef || !activeStroke || (event.buttons & 1) === 0) return;
@@ -1196,6 +1220,7 @@ function NoteWindow(props: { noteId: string }) {
                   if (record) saveSketchStroke(record);
                 }
                 activeStroke = null;
+                scheduleCanvasHydration();
               }}
               onPointerLeave={() => {
                 if (canvasRef && activeStroke) {
@@ -1203,6 +1228,7 @@ function NoteWindow(props: { noteId: string }) {
                   if (record) saveSketchStroke(record);
                 }
                 activeStroke = null;
+                scheduleCanvasHydration();
               }}
             />
           </section>
@@ -1234,13 +1260,21 @@ function NoteWindow(props: { noteId: string }) {
       const image = new Image();
       image.onload = () => {
         clearSketchCanvas(context);
-        context.drawImage(image, 0, 0, SKETCH_LOGICAL_SIZE, SKETCH_LOGICAL_SIZE);
+        context.drawImage(image, 0, 0, context.canvas.width, context.canvas.height);
         renderStrokes();
       };
       image.src = current.sketchData;
       return;
     }
     renderStrokes();
+  }
+
+  function scheduleCanvasHydration() {
+    if (canvasRedrawFrame !== undefined) window.cancelAnimationFrame(canvasRedrawFrame);
+    canvasRedrawFrame = window.requestAnimationFrame(() => {
+      canvasRedrawFrame = undefined;
+      if (!activeStroke) hydrateCanvas();
+    });
   }
 }
 

@@ -522,6 +522,15 @@ svg {
   color: #fffaf0;
 }
 
+.brush-size-picker {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.brush-size-picker button {
+  min-height: 30px;
+  font-size: 11px;
+}
+
 .reminder-toast {
   position: absolute;
   left: 50%;
@@ -671,9 +680,14 @@ svg {
   gap: 8px;
 }
 
+.note-body.is-two-column {
+  padding-bottom: 8px;
+}
+
 .note-columns.is-two-column {
   grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
-  align-items: start;
+  min-height: 100%;
+  align-items: stretch;
 }
 
 .note-column {
@@ -681,9 +695,13 @@ svg {
   max-width: 100%;
 }
 
+.note-body.is-two-column .note-column {
+  padding-bottom: 28px;
+}
+
 .note-column-divider {
   width: 1px;
-  min-height: 120px;
+  min-height: 0;
   align-self: stretch;
   background: color-mix(in srgb, var(--note-line), #000 8%);
   opacity: 0.72;
@@ -1010,6 +1028,19 @@ svg {
 .note-menu-action.close-action {
   color: #a82121;
   border-color: rgba(168, 33, 33, 0.34);
+}
+
+.note-menu-action.delete-action {
+  border-color: #a82121;
+  background: #a82121;
+  color: #fffaf0;
+  font-weight: 700;
+}
+
+.note-menu-action.delete-action:hover,
+.note-menu-action.delete-action:focus-visible {
+  border-color: #831717;
+  background: #831717;
 }
 
 .note-menu-action:disabled {

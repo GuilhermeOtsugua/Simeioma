@@ -107,7 +107,7 @@ Replace the ambiguous `sketchSmoothing` boolean/label with a persisted `sketchRe
 | `simeioma-adaptive` | Coalesced samples → candidate adaptive filter → fixed-distance resampling | Ordinary high-DPI canvas antialiasing | Simeioma’s refined, calm-ink product treatment. It is not a Nintendo reconstruction. |
 | `tomodachi-pixel` | The same candidate geometry pipeline, pending continuous-reference calibration | Opaque, pixel-aligned hard coverage; no blur and no deliberate soft edge | A controlled Tomodachi-inspired raster experiment. The source currently supports its edge treatment, not its filter or spacing. |
 
-`Settings.sketchRenderingMode` selects the mode for **new** freehand strokes. Each new freehand record stamps that choice as `renderingMode`; a historic record without it resolves to `legacy`. This prevents a later settings change from altering existing note replay or export. All new strokes remain freehand; historic line, circle, and rectangle records still replay accurately for compatibility.
+`Settings.sketchRenderingMode` selects the mode for **new** freehand strokes. `Settings.sketchBrushSize` selects `thin` (1 CSS px), `default` (2 CSS px), or `thick` (4 CSS px) for new freehand strokes. Each record stamps both choices; historic records without either resolve to `legacy` rendering and the default brush. This prevents a later settings change from altering existing note replay or export. All new strokes remain freehand; historic line, circle, and rectangle records still replay accurately for compatibility.
 
 ### Deferred: shape recognition
 
@@ -122,16 +122,16 @@ Automatic line/circle/rectangle conversion is disabled. The old threshold-only r
 - Add unit tests for: no-op first point, constant-speed path, stationary jitter reduction, fast turn responsiveness, and deterministic replay.
 - **Acceptance:** legacy notes still load; the same raw record produces identical raster geometry every replay.
 
-### Slice 2 — live input and high-DPI raster surface
+### Slice 2 — live input and responsive high-DPI raster surface
 
 - Consume coalesced events where present, with the ordinary event fallback.
-- Render at `CSS size × devicePixelRatio` while retaining the current 384-unit logical coordinate system for persistence.
-- Batch display drawing in `requestAnimationFrame`; do not call persistence on `pointermove`.
-- **Acceptance:** no visible gaps on fast mouse movement; no blur from browser upscaling; no dropped final segment on pointer-up/leave/cancel.
+- Render at `visible CSS width × devicePixelRatio` by `visible CSS height × devicePixelRatio` while retaining the 384-unit logical coordinate system for persistence.
+- Rerasterize persisted freehand records after note/window size changes through a throttled resize redraw; do not persist during `pointermove` or resize.
+- **Acceptance:** no visible gaps on fast mouse movement; enlarging a note redraws strokes sharply rather than stretching a fixed bitmap; no dropped final segment on pointer-up/leave/cancel.
 
 ### Slice 3 — named rendering modes behind an explicit setting
 
-- Add persisted `sketchRenderingMode: "legacy" | "simeioma-adaptive" | "tomodachi-pixel"` as the default for new freehand strokes; stamp the selected `renderingMode` on each record and resolve missing historic values as `legacy`.
+- Add persisted `sketchRenderingMode: "legacy" | "simeioma-adaptive" | "tomodachi-pixel"` plus `sketchBrushSize: "thin" | "default" | "thick"` as defaults for new freehand strokes; stamp both choices on each record and resolve missing historic values as `legacy`/`default`.
 - Apply modes only to freehand records. New gestures never auto-convert; retain the precise renderer only for historic geometric records.
 - Implement `tomodachi-pixel` as a hard-coverage renderer with pixel-aligned coordinates/dabs; do not quietly make it a blurred or anti-aliased variant.
 - Provide a small local debug fixture that draws the same recorded gesture in all three modes.

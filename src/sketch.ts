@@ -1,4 +1,4 @@
-import type { SketchRenderingMode, SketchStrokeRecord } from "./simeiomaModel";
+import type { SketchBrushSize, SketchRenderingMode, SketchStrokeRecord } from "./simeiomaModel";
 
 export const SKETCH_LOGICAL_SIZE = 384;
 export type SketchPoint = { x: number; y: number };
@@ -14,13 +14,27 @@ export type SketchStroke = {
   last: SketchPoint;
   before: ImageData | null;
   renderingMode: SketchRenderingMode;
+  brushSize: SketchBrushSize;
 };
+
 export const DEFAULT_SMOOTH_SKETCH_OPTIONS: SmoothSketchOptions = {
   minCutoff: 1.35,
   beta: 0.012,
   derivativeCutoff: 1,
   spacing: 2.2,
 };
+
+export function sketchCanvasBackingSize(size: { width: number; height: number }, pixelRatio: number) {
+  const safeRatio = Math.max(pixelRatio, 1);
+  return {
+    width: Math.max(1, Math.round(size.width * safeRatio)),
+    height: Math.max(1, Math.round(size.height * safeRatio)),
+  };
+}
+
+export function sketchBrushWidth(size: SketchBrushSize) {
+  return { thin: 1, default: 2, thick: 4 }[size];
+}
 
 export function smoothSketchPoints(points: SketchSample[], options: SmoothSketchOptions = DEFAULT_SMOOTH_SKETCH_OPTIONS): SketchPoint[] {
   if (points.length < 2) return points.map(({ x, y }) => ({ x, y }));
@@ -79,11 +93,17 @@ export function resampleSketchPoints(points: SketchPoint[], spacing: number, fin
 }
 
 export function prepareSketchCanvas(canvas: HTMLCanvasElement) {
-  const pixelRatio = Math.max(window.devicePixelRatio || 1, 1);
-  const size = Math.round(SKETCH_LOGICAL_SIZE * pixelRatio);
-  if (canvas.width !== size || canvas.height !== size) {
-    canvas.width = size;
-    canvas.height = size;
+  const rect = canvas.getBoundingClientRect();
+  const size = sketchCanvasBackingSize(
+    {
+      width: rect.width || SKETCH_LOGICAL_SIZE,
+      height: rect.height || SKETCH_LOGICAL_SIZE,
+    },
+    Math.max(window.devicePixelRatio || 1, 1),
+  );
+  if (canvas.width !== size.width || canvas.height !== size.height) {
+    canvas.width = size.width;
+    canvas.height = size.height;
   }
   const context = canvas.getContext("2d");
   if (context) configureSketchContext(context);
@@ -106,6 +126,7 @@ export function startSketch(
   event: PointerEvent,
   canvas: HTMLCanvasElement | undefined,
   renderingMode: SketchRenderingMode = "legacy",
+  brushSize: SketchBrushSize = "default",
 ): SketchStroke | null {
   if (!canvas) return null;
   canvas.setPointerCapture(event.pointerId);
@@ -114,10 +135,12 @@ export function startSketch(
   if (!context) return null;
   const before = context.getImageData(0, 0, canvas.width, canvas.height);
   if (renderingMode === "legacy") {
+    configureSketchContext(context, brushSize);
     context.beginPath();
-    context.moveTo(point.x, point.y);
+    const canvasPoint = toCanvasPoint(context.canvas, point);
+    context.moveTo(canvasPoint.x, canvasPoint.y);
   }
-  return { points: [point], last: point, before, renderingMode };
+  return { points: [point], last: point, before, renderingMode, brushSize };
 }
 
 export function drawSketch(event: PointerEvent, canvas: HTMLCanvasElement, stroke: SketchStroke) {
@@ -129,23 +152,27 @@ export function drawSketch(event: PointerEvent, canvas: HTMLCanvasElement, strok
   if (!context) return;
 
   if (stroke.renderingMode === "legacy") {
+    configureSketchContext(context, stroke.brushSize);
     const mid = { x: (stroke.last.x + point.x) / 2, y: (stroke.last.y + point.y) / 2 };
-    context.quadraticCurveTo(stroke.last.x, stroke.last.y, mid.x, mid.y);
+    const canvasLast = toCanvasPoint(context.canvas, stroke.last);
+    const canvasMid = toCanvasPoint(context.canvas, mid);
+    context.quadraticCurveTo(canvasLast.x, canvasLast.y, canvasMid.x, canvasMid.y);
     context.stroke();
     stroke.last = point;
     return;
   }
 
   if (stroke.before) context.putImageData(stroke.before, 0, 0);
-  renderFreehand(context, stroke.points, stroke.renderingMode);
+  renderFreehand(context, stroke.points, stroke.renderingMode, stroke.brushSize);
   stroke.last = point;
 }
 
-export function recordSketchStroke(stroke: Pick<SketchStroke, "points" | "renderingMode">): Extract<SketchStrokeRecord, { type: "freehand" }> {
+export function recordSketchStroke(stroke: Pick<SketchStroke, "points" | "renderingMode" | "brushSize">): Extract<SketchStrokeRecord, { type: "freehand" }> {
   return {
     type: "freehand",
     points: stroke.points.map((point) => ({ ...point })),
     renderingMode: stroke.renderingMode,
+    brushSize: stroke.brushSize,
   };
 }
 
@@ -158,34 +185,48 @@ export function resolveSketchRenderingMode(record: Extract<SketchStrokeRecord, {
   return record.renderingMode ?? "legacy";
 }
 
+export function resolveSketchBrushSize(record: Extract<SketchStrokeRecord, { type: "freehand" }>): SketchBrushSize {
+  return record.brushSize ?? "default";
+}
+
 export function renderSketchRecord(context: CanvasRenderingContext2D, record: SketchStrokeRecord) {
-  configureSketchContext(context);
   if (record.type === "freehand") {
-    renderFreehand(context, record.points, resolveSketchRenderingMode(record));
+    renderFreehand(context, record.points, resolveSketchRenderingMode(record), resolveSketchBrushSize(record));
     return;
   }
 
+  configureSketchContext(context);
   context.beginPath();
   if (record.type === "line") {
-    context.moveTo(record.start.x, record.start.y);
-    context.lineTo(record.end.x, record.end.y);
+    const start = toCanvasPoint(context.canvas, record.start);
+    const end = toCanvasPoint(context.canvas, record.end);
+    context.moveTo(start.x, start.y);
+    context.lineTo(end.x, end.y);
   } else if (record.type === "circle") {
-    context.arc(record.center.x, record.center.y, record.radius, 0, Math.PI * 2);
+    const center = toCanvasPoint(context.canvas, record.center);
+    const scale = canvasScale(context.canvas);
+    context.ellipse(center.x, center.y, record.radius * scale.x, record.radius * scale.y, 0, 0, Math.PI * 2);
   } else {
-    context.rect(record.x, record.y, record.width, record.height);
+    const origin = toCanvasPoint(context.canvas, { x: record.x, y: record.y });
+    const scale = canvasScale(context.canvas);
+    context.rect(origin.x, origin.y, record.width * scale.x, record.height * scale.y);
   }
   context.stroke();
 }
 
-function renderFreehand(context: CanvasRenderingContext2D, points: SketchSample[], mode: SketchRenderingMode) {
+function renderFreehand(context: CanvasRenderingContext2D, points: SketchSample[], mode: SketchRenderingMode, brushSize: SketchBrushSize) {
   if (!points.length) return;
   if (mode === "legacy") {
+    configureSketchContext(context, brushSize);
     context.beginPath();
-    context.moveTo(points[0].x, points[0].y);
+    const first = toCanvasPoint(context.canvas, points[0]);
+    context.moveTo(first.x, first.y);
     let last = points[0];
     for (const point of points.slice(1)) {
       const mid = { x: (last.x + point.x) / 2, y: (last.y + point.y) / 2 };
-      context.quadraticCurveTo(last.x, last.y, mid.x, mid.y);
+      const canvasLast = toCanvasPoint(context.canvas, last);
+      const canvasMid = toCanvasPoint(context.canvas, mid);
+      context.quadraticCurveTo(canvasLast.x, canvasLast.y, canvasMid.x, canvasMid.y);
       last = point;
     }
     context.stroke();
@@ -194,46 +235,70 @@ function renderFreehand(context: CanvasRenderingContext2D, points: SketchSample[
 
   const displayPoints = smoothSketchPoints(points);
   if (mode === "tomodachi-pixel") {
-    renderPixelStroke(context, displayPoints);
+    renderPixelStroke(context, displayPoints, brushSize);
     return;
   }
 
+  configureSketchContext(context, brushSize);
   context.beginPath();
-  context.moveTo(displayPoints[0].x, displayPoints[0].y);
-  for (const point of displayPoints.slice(1)) context.lineTo(point.x, point.y);
+  const first = toCanvasPoint(context.canvas, displayPoints[0]);
+  context.moveTo(first.x, first.y);
+  for (const point of displayPoints.slice(1)) {
+    const canvasPoint = toCanvasPoint(context.canvas, point);
+    context.lineTo(canvasPoint.x, canvasPoint.y);
+  }
   context.stroke();
 }
 
-function renderPixelStroke(context: CanvasRenderingContext2D, points: SketchPoint[]) {
+function renderPixelStroke(context: CanvasRenderingContext2D, points: SketchPoint[], brushSize: SketchBrushSize) {
   context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0);
   context.fillStyle = "rgb(35, 31, 25)";
-  drawPixelDab(context, points[0]);
+  const dabSize = Math.max(1, Math.round(sketchBrushWidth(brushSize) * canvasPixelRatio(context.canvas)));
+  drawPixelDab(context, toCanvasPoint(context.canvas, points[0]), dabSize);
   for (let index = 1; index < points.length; index += 1) {
-    const previous = points[index - 1];
-    const point = points[index];
+    const previous = toCanvasPoint(context.canvas, points[index - 1]);
+    const point = toCanvasPoint(context.canvas, points[index]);
     const steps = Math.max(1, Math.ceil(distance(previous, point)));
     for (let step = 1; step <= steps; step += 1) {
       const ratio = step / steps;
       drawPixelDab(context, {
         x: previous.x + (point.x - previous.x) * ratio,
         y: previous.y + (point.y - previous.y) * ratio,
-      });
+      }, dabSize);
     }
   }
   context.restore();
 }
 
-function drawPixelDab(context: CanvasRenderingContext2D, point: SketchPoint) {
-  context.fillRect(Math.round(point.x) - 1, Math.round(point.y) - 1, 3, 3);
+function drawPixelDab(context: CanvasRenderingContext2D, point: SketchPoint, size: number) {
+  const offset = Math.floor(size / 2);
+  context.fillRect(Math.round(point.x) - offset, Math.round(point.y) - offset, size, size);
 }
 
-function configureSketchContext(context: CanvasRenderingContext2D) {
-  const scale = context.canvas.width / SKETCH_LOGICAL_SIZE;
-  context.setTransform(scale, 0, 0, scale, 0, 0);
-  context.lineWidth = 2;
+function configureSketchContext(context: CanvasRenderingContext2D, brushSize: SketchBrushSize = "default") {
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.lineWidth = sketchBrushWidth(brushSize) * canvasPixelRatio(context.canvas);
   context.lineCap = "round";
   context.lineJoin = "round";
   context.strokeStyle = "rgba(35, 31, 25, 0.76)";
+}
+
+function canvasScale(canvas: HTMLCanvasElement) {
+  return {
+    x: canvas.width / SKETCH_LOGICAL_SIZE,
+    y: canvas.height / SKETCH_LOGICAL_SIZE,
+  };
+}
+
+function canvasPixelRatio(canvas: HTMLCanvasElement) {
+  const rect = canvas.getBoundingClientRect();
+  return rect.width > 0 ? canvas.width / rect.width : Math.max(window.devicePixelRatio || 1, 1);
+}
+
+function toCanvasPoint(canvas: HTMLCanvasElement, point: SketchPoint): SketchPoint {
+  const scale = canvasScale(canvas);
+  return { x: point.x * scale.x, y: point.y * scale.y };
 }
 
 function distance(a: SketchPoint, b: SketchPoint) {

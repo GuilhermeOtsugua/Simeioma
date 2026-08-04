@@ -3,6 +3,7 @@ import {
   applyMarkdownEdit,
   markdownTokens,
   moveCaretAcrossInlineToken,
+  moveCaretIntoInlineToken,
   moveCaretToInlineTokenEnd,
   nextGraphemeBoundary,
   previousGraphemeBoundary,
@@ -48,7 +49,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   let composing = false;
   let isFocused = false;
   let pointerFocusPending = false;
-  let focusEntryTokenEnd: number | null = null;
+  let revealedTokenFrom: number | null = null;
   let compositionHistoryRecorded = false;
   let renderedSource = "";
   let renderedSelection = "";
@@ -265,13 +266,13 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   const refreshPresentationForSelection = () => {
     activeTokenStarts = new Set();
     activeLineIndexes = new Set();
-    if (!isFocused) return;
+    if (!isFocused && document.activeElement !== element) return;
     const isCollapsed = selection.start === selection.end;
     for (const token of markdownTokens(source)) {
       const selected = isCollapsed
         ? selection.start > token.from && selection.start < token.to
         : selection.start < token.to && selection.end > token.from;
-      if (selected || (isCollapsed && focusEntryTokenEnd === token.to && selection.start === token.to)) {
+      if (selected || (isCollapsed && revealedTokenFrom === token.from && (selection.start === token.from || selection.start === token.to))) {
         activeTokenStarts.add(token.from);
       }
     }
@@ -325,8 +326,9 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     const next = selectionFromDom();
     if (!next) return;
     selection = next;
-    if (focusEntryTokenEnd !== null && (next.start !== next.end || next.start !== focusEntryTokenEnd)) {
-      focusEntryTokenEnd = null;
+    const revealedToken = markdownTokens(source).find((token) => token.from === revealedTokenFrom);
+    if (!revealedToken || next.start !== next.end || (next.start !== revealedToken.from && next.start !== revealedToken.to)) {
+      revealedTokenFrom = null;
     }
 
   };
@@ -339,7 +341,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     }
     source = nextValue;
     selection = nextSelection;
-    focusEntryTokenEnd = null;
+    revealedTokenFrom = null;
     activeTokenStarts = new Set();
     activeLineIndexes = new Set();
     renderedSource = "";
@@ -448,10 +450,24 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   const handleKeyDown: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
     if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       rememberSelection();
-      const next = moveCaretAcrossInlineToken(source, selection, event.key === "ArrowLeft" ? "left" : "right");
-      if (next) {
+      const direction = event.key === "ArrowLeft" ? "left" : "right";
+      const entering = moveCaretIntoInlineToken(source, selection, direction);
+      if (entering) {
+        const token = markdownTokens(source).find((item) => direction === "right" ? item.from === selection.start : item.to === selection.start);
+        if (token && revealedTokenFrom !== token.from) {
+          event.preventDefault();
+          selection = entering;
+          revealedTokenFrom = token.from;
+          renderedSource = "";
+          render();
+          return;
+        }
+      }
+      const exiting = moveCaretAcrossInlineToken(source, selection, direction);
+      if (exiting) {
         event.preventDefault();
-        selection = next;
+        selection = exiting;
+        revealedTokenFrom = null;
         renderedSource = "";
         render();
         return;
@@ -573,7 +589,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       onContextMenu={(event) => props.onContextMenu?.(event)}
       onPointerDown={(event) => {
         pointerFocusPending = true;
-        focusEntryTokenEnd = null;
+        revealedTokenFrom = null;
         props.onPointerDown?.(event);
       }}
       onKeyDown={handleKeyDown}
@@ -594,7 +610,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
           const token = markdownTokens(source).find((item) => selection.start === selection.end && selection.start > item.from && selection.start <= item.to);
           if (token) {
             selection = moveCaretToInlineTokenEnd(source, selection);
-            focusEntryTokenEnd = token.to;
+            revealedTokenFrom = token.from;
           }
         }
         pointerFocusPending = false;
@@ -604,7 +620,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       }}
       onBlur={() => {
         isFocused = false;
-        focusEntryTokenEnd = null;
+        revealedTokenFrom = null;
         renderedSource = "";
         render(false);
         props.onBlur?.();

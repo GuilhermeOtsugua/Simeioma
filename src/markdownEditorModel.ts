@@ -27,6 +27,20 @@ export function moveCaretToInlineTokenEnd(value: string, selection: SourceSelect
   return token ? { start: token.to, end: token.to } : selection;
 }
 
+export function moveCaretIntoInlineToken(
+  value: string,
+  selection: SourceSelection,
+  direction: "left" | "right",
+): SourceSelection | null {
+  if (selection.start !== selection.end) return null;
+  const caret = selection.start;
+  for (const token of markdownTokens(value)) {
+    if (direction === "right" && caret === token.from) return selection;
+    if (direction === "left" && caret === token.to) return selection;
+  }
+  return null;
+}
+
 export function moveCaretAcrossInlineToken(
   value: string,
   selection: SourceSelection,

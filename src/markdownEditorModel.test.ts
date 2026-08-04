@@ -3,6 +3,7 @@ import {
   applyMarkdownEdit,
   markdownTokens,
   moveCaretAcrossInlineToken,
+  moveCaretIntoInlineToken,
   moveCaretToInlineTokenEnd,
   previousGraphemeBoundary,
   wrapSelectionWithStrikethrough,
@@ -38,6 +39,14 @@ describe("Markdown editor model", () => {
   test("inserts empty strikethrough markers when no text is selected", () => {
     expect(wrapSelectionWithStrikethrough("Plan", { start: 4, end: 4 }))
       .toEqual({ value: "Plan~~~~", selection: { start: 6, end: 6 } });
+  });
+
+  test("surfaces inline Markdown wrappers at their approached boundary", () => {
+    const value = "Before **bold** after";
+    expect(moveCaretIntoInlineToken(value, { start: 7, end: 7 }, "right"))
+      .toEqual({ start: 7, end: 7 });
+    expect(moveCaretIntoInlineToken(value, { start: 15, end: 15 }, "left"))
+      .toEqual({ start: 15, end: 15 });
   });
 
   test("moves one visual step out of inline Markdown wrappers", () => {

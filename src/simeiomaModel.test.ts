@@ -32,6 +32,10 @@ describe("Simeioma model", () => {
     expect(DEFAULT_SETTINGS.hideNotesKeybind).toBe("Ctrl + Shift + H");
   });
 
+  test("defaults new freehand strokes to adaptive Simeioma rendering", () => {
+    expect(DEFAULT_SETTINGS.sketchRenderingMode).toBe("simeioma-adaptive");
+  });
+
   test("formats periodic reminder values as short human labels", () => {
     expect(periodicLabel("0.5")).toBe("Every 30min");
     expect(periodicLabel("1")).toBe("Every 1h");

@@ -5,6 +5,7 @@ import {
   moveCaretIntoInlineToken,
   moveCaretToInlineTokenEnd,
   previousGraphemeBoundary,
+  toggleStrikethrough,
   wrapSelectionWithStrikethrough,
 } from "./markdownEditorModel";
 
@@ -38,6 +39,30 @@ describe("Markdown editor model", () => {
   test("inserts empty strikethrough markers when no text is selected", () => {
     expect(wrapSelectionWithStrikethrough("Plan", { start: 4, end: 4 }))
       .toEqual({ value: "Plan~~~~", selection: { start: 6, end: 6 } });
+  });
+
+  test("wraps the word under a collapsed strikethrough command", () => {
+    expect(toggleStrikethrough("Plan lunch", { start: 7, end: 7 }))
+      .toEqual({ value: "Plan ~~lunch~~", selection: { start: 7, end: 12 } });
+  });
+
+  test("wraps a selected range and toggles an existing strikethrough wrapper off", () => {
+    expect(toggleStrikethrough("Plan lunch", { start: 5, end: 10 }))
+      .toEqual({ value: "Plan ~~lunch~~", selection: { start: 7, end: 12 } });
+    expect(toggleStrikethrough("Plan ~~lunch~~", { start: 7, end: 12 }))
+      .toEqual({ value: "Plan lunch", selection: { start: 5, end: 10 } });
+  });
+
+  test("unwraps the current struck term from a collapsed caret", () => {
+    expect(toggleStrikethrough("Plan ~~lunch~~", { start: 9, end: 9 }))
+      .toEqual({ value: "Plan lunch", selection: { start: 7, end: 7 } });
+  });
+
+  test("only changes the targeted term when multiple strikethrough tokens exist", () => {
+    expect(toggleStrikethrough("~~alpha~~ beta", { start: 12, end: 12 }))
+      .toEqual({ value: "~~alpha~~ ~~beta~~", selection: { start: 12, end: 16 } });
+    expect(toggleStrikethrough("~~alpha~~ ~~beta~~", { start: 3, end: 3 }))
+      .toEqual({ value: "alpha ~~beta~~", selection: { start: 1, end: 1 } });
   });
 
   test("surfaces inline Markdown wrappers at their approached boundary", () => {

@@ -6,7 +6,7 @@ import {
   moveCaretToInlineTokenEnd,
   nextGraphemeBoundary,
   previousGraphemeBoundary,
-  wrapSelectionWithStrikethrough,
+  toggleStrikethrough,
   type MarkdownToken,
   type SourceSelection,
 } from "./markdownEditorModel";
@@ -48,6 +48,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   let composing = false;
   let isFocused = false;
   let pointerFocusPending = false;
+  let pendingStrikeSelection: SourceSelection | null = null;
   let revealedTokenFrom: number | null = null;
   let pendingArrowDirection: "left" | "right" | null = null;
   let compositionHistoryRecorded = false;
@@ -67,9 +68,9 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     props.onChange?.();
   };
 
-  const render = (restoreSelection = true) => {
+  const render = (restoreSelection = true, forceInactive = false) => {
     if (!element || composing) return;
-    refreshPresentationForSelection();
+    refreshPresentationForSelection(forceInactive);
     const selectionKey = `${selection.start}:${selection.end}:${[...activeTokenStarts].join(",")}:${[...activeLineIndexes].join(",")}`;
     if (renderedSource === source && renderedSelection === selectionKey) return;
 
@@ -263,10 +264,10 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     return null;
   };
 
-  const refreshPresentationForSelection = () => {
+  const refreshPresentationForSelection = (forceInactive = false) => {
     activeTokenStarts = new Set();
     activeLineIndexes = new Set();
-    if (!isFocused && document.activeElement !== element) return;
+    if (forceInactive || (!isFocused && document.activeElement !== element)) return;
     const isCollapsed = selection.start === selection.end;
     for (const token of markdownTokens(source)) {
       const selected = isCollapsed
@@ -320,6 +321,17 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     const from = Number(span.dataset.sourceFrom);
     const text = span.firstChild as Text | null;
     return { node: text ?? span, offset: Math.max(0, Math.min(offset - from, text?.data.length ?? 0)) };
+  };
+
+  const sourceOffsetAtPoint = (x: number, y: number) => {
+    const documentWithCaret = document as Document & {
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    const position = documentWithCaret.caretPositionFromPoint?.(x, y);
+    if (position) return sourceOffsetForDomPosition(position.offsetNode, position.offset);
+    const range = documentWithCaret.caretRangeFromPoint?.(x, y);
+    return range ? sourceOffsetForDomPosition(range.startContainer, range.startOffset) : null;
   };
 
   const rememberSelection = () => {
@@ -380,7 +392,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     if (event.inputType === "insertFromPaste" || event.inputType === "insertFromDrop") result = applyMarkdownEdit(source, range, event.dataTransfer?.getData("text/plain") ?? event.data ?? "");
     if (event.inputType === "deleteContentBackward" || event.inputType === "deleteWordBackward" || event.inputType === "deleteSoftLineBackward") result = deleteBackward(range);
     if (event.inputType === "deleteContentForward" || event.inputType === "deleteWordForward" || event.inputType === "deleteSoftLineForward") result = deleteForward(range);
-    if (event.inputType === "formatStrikeThrough") result = wrapSelectionWithStrikethrough(source, range);
+    if (event.inputType === "formatStrikeThrough") result = toggleStrikethrough(source, range);
 
     if (!result) return;
     if (!event.cancelable) {
@@ -501,8 +513,9 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   const handleClick: JSX.EventHandlerUnion<HTMLDivElement, MouseEvent> = (event) => {
     if (event.ctrlKey && event.button === 0) {
       event.preventDefault();
-      rememberSelection();
-      const result = wrapSelectionWithStrikethrough(source, selection);
+      selection = pendingStrikeSelection ?? selectionFromDom() ?? selection;
+      pendingStrikeSelection = null;
+      const result = toggleStrikethrough(source, selection);
       edit(result.value, result.selection);
       return;
     }
@@ -550,7 +563,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       render();
     },
     wrapSelectionWithStrikethrough: () => {
-      const result = wrapSelectionWithStrikethrough(source, selection);
+      const result = toggleStrikethrough(source, selection);
       edit(result.value, result.selection);
     },
     setValue: (value) => {
@@ -603,6 +616,15 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       onPointerDown={(event) => {
         pointerFocusPending = true;
         revealedTokenFrom = null;
+        if (event.ctrlKey && event.button === 0) {
+          const existing = selectionFromDom();
+          pendingStrikeSelection = existing && existing.start !== existing.end
+            ? existing
+            : (() => {
+              const offset = sourceOffsetAtPoint(event.clientX, event.clientY);
+              return offset === null ? existing ?? selection : { start: offset, end: offset };
+            })();
+        }
         props.onPointerDown?.(event);
       }}
       onKeyDown={handleKeyDown}
@@ -615,8 +637,13 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       }}
       onPointerUp={() => {
         pointerFocusPending = false;
+        if (pendingStrikeSelection) return;
         rememberSelection();
         render();
+      }}
+      onPointerCancel={() => {
+        pointerFocusPending = false;
+        pendingStrikeSelection = null;
       }}
       onFocus={() => {
         isFocused = true;
@@ -637,7 +664,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
         isFocused = false;
         revealedTokenFrom = null;
         renderedSource = "";
-        render(false);
+        render(false, true);
         props.onBlur?.();
       }}
     />

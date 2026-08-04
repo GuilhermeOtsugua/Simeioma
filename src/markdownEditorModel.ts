@@ -66,6 +66,24 @@ export function applyMarkdownEdit(value: string, selection: SourceSelection, ins
   return { value: next, selection: { start: caret, end: caret } };
 }
 
+export function toggleStrikethrough(value: string, selection: SourceSelection) {
+  const range = normalizeSelection(value, selection);
+  const target = range.start === range.end ? wordRangeAt(value, range.start) ?? range : range;
+  const struck = markdownTokens(value).find((token) =>
+    token.type === "strike" && target.start >= token.from && target.end <= token.to,
+  );
+  if (struck) {
+    const unwrappedSelection = range.start === range.end ? range : target;
+    const start = struck.from + Math.max(0, Math.min(unwrappedSelection.start - struck.contentFrom, struck.text.length));
+    const end = struck.from + Math.max(0, Math.min(unwrappedSelection.end - struck.contentFrom, struck.text.length));
+    return {
+      value: `${value.slice(0, struck.from)}${struck.text}${value.slice(struck.to)}`,
+      selection: { start, end },
+    };
+  }
+  return wrapSelectionWithStrikethrough(value, target);
+}
+
 export function wrapSelectionWithStrikethrough(value: string, selection: SourceSelection) {
   const range = normalizeSelection(value, selection);
   if (range.start === range.end) {
@@ -157,6 +175,27 @@ function pairedToken(
     contentTo: end + offset,
     text: value.slice(contentFrom, end),
   };
+}
+
+function wordRangeAt(value: string, offset: number): SourceSelection | null {
+  const safeOffset = Math.max(0, Math.min(offset, value.length));
+  if (typeof Intl.Segmenter !== "undefined") {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: "word" });
+    for (const item of segmenter.segment(value)) {
+      const end = item.index + item.segment.length;
+      if (item.isWordLike && safeOffset >= item.index && safeOffset <= end) {
+        return { start: item.index, end };
+      }
+    }
+  }
+
+  const match = /[\p{L}\p{N}_]+/gu;
+  for (const item of value.matchAll(match)) {
+    const start = item.index ?? 0;
+    const end = start + item[0].length;
+    if (safeOffset >= start && safeOffset <= end) return { start, end };
+  }
+  return null;
 }
 
 function normalizeSelection(value: string, selection: SourceSelection): SourceSelection {

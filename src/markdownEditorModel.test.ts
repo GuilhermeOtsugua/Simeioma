@@ -3,6 +3,7 @@ import {
   applyMarkdownEdit,
   markdownTokens,
   moveCaretAcrossInlineToken,
+  moveCaretToInlineTokenEnd,
   previousGraphemeBoundary,
   wrapSelectionWithStrikethrough,
 } from "./markdownEditorModel";
@@ -45,6 +46,14 @@ describe("Markdown editor model", () => {
       .toEqual({ start: 15, end: 15 });
     expect(moveCaretAcrossInlineToken(value, { start: 24, end: 24 }, "left"))
       .toEqual({ start: 22, end: 22 });
+  });
+
+  test("moves a returning caret to the end of its inline wrapper", () => {
+    const value = "Before **bold** after";
+    expect(moveCaretToInlineTokenEnd(value, { start: 11, end: 11 }))
+      .toEqual({ start: 15, end: 15 });
+    expect(moveCaretToInlineTokenEnd(value, { start: 7, end: 10 }))
+      .toEqual({ start: 7, end: 10 });
   });
 
   test("does not hijack non-boundary or range selection navigation", () => {

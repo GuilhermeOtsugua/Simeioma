@@ -21,6 +21,12 @@ export function markdownTokens(value: string, offset = 0): MarkdownToken[] {
   return tokens;
 }
 
+export function moveCaretToInlineTokenEnd(value: string, selection: SourceSelection): SourceSelection {
+  if (selection.start !== selection.end) return selection;
+  const token = markdownTokens(value).find((item) => selection.start > item.from && selection.start < item.to);
+  return token ? { start: token.to, end: token.to } : selection;
+}
+
 export function moveCaretAcrossInlineToken(
   value: string,
   selection: SourceSelection,

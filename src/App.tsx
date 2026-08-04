@@ -576,26 +576,8 @@ function NoteWindow(props: { noteId: string }) {
   const otherNotes = createMemo(() => state().notes.filter((item) => item.id !== props.noteId));
   const storedBodyText = createMemo(() => note()?.lines.map((line) => line.text).join("\n") ?? "");
   const storedRightText = createMemo(() => note()?.rightText ?? "");
-  const [bodyDraft, setBodyDraft] = createSignal("");
-  const [rightDraft, setRightDraft] = createSignal("");
-  const bodyText = createMemo(() => bodyDraft());
-  const rightText = createMemo(() => rightDraft());
   const mentions = createMemo(() => collectMentions(note(), otherNotes()));
   const itemLayoutIsTwoColumn = createMemo(() => note()?.layout === "two-column");
-
-  createEffect(() => {
-    const text = storedBodyText();
-    if (text === bodyDraft()) return;
-    setBodyDraft(text);
-    bodyEditor?.setValue(text);
-  });
-
-  createEffect(() => {
-    const text = storedRightText();
-    if (text === rightDraft()) return;
-    setRightDraft(text);
-    rightEditor?.setValue(text);
-  });
 
   const createNoteFromShortcut = () => enqueueNoteCreation(async () => {
     const latest = loadState();
@@ -1029,11 +1011,10 @@ function NoteWindow(props: { noteId: string }) {
               <div class="note-column">
                 <MarkdownEditor
                   ref={(handle) => (bodyEditor = handle)}
-                  value={bodyText()}
+                  value={storedBodyText()}
                   label="Note line"
                   placeholder="Write..."
                   onValue={(text) => {
-                    setBodyDraft(text);
                     updateBodyText(text);
                     rememberTextSelection("body");
                     void growBody();
@@ -1058,11 +1039,10 @@ function NoteWindow(props: { noteId: string }) {
                 <div class="note-column">
                   <MarkdownEditor
                     ref={(handle) => (rightEditor = handle)}
-                    value={rightText()}
+                    value={storedRightText()}
                     label="Note right column"
                     placeholder="Write..."
                     onValue={(text) => {
-                      setRightDraft(text);
                       updateRightText(text);
                       rememberTextSelection("right");
                       void growBody();

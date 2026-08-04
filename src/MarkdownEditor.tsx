@@ -99,13 +99,15 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
 
     const task = line.text.match(/^- \[([ xX])\]\s+(.*)$/);
     if (task) {
-      row.classList.add("is-task", task[1].toLowerCase() === "x" ? "is-done" : "");
+      row.classList.add("is-task");
+      if (task[1].toLowerCase() === "x") row.classList.add("is-done");
       const box = document.createElement("span");
       box.className = "markdown-editor-task-box";
       box.contentEditable = "false";
       box.setAttribute("aria-hidden", "true");
       row.append(box);
-      appendSourceSegment(row, task[2] || " ", line.from + task[0].length - task[2].length);
+      if (task[2]) appendSourceSegment(row, task[2], line.from + task[0].length - task[2].length);
+      else appendText(row, "", line.to, line.to);
       return row;
     }
 
@@ -257,7 +259,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   };
 
   const domPositionForSourceOffset = (offset: number) => {
-    const spans = [...element.querySelectorAll<HTMLElement>("[data-source-from]")];
+    const spans = [...element.querySelectorAll<HTMLElement>("span[data-source-from]")];
     const span = spans.find((item) => {
       const from = Number(item.dataset.sourceFrom);
       const to = Number(item.dataset.sourceTo);
@@ -469,6 +471,9 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   });
 
   onMount(() => {
+    source = props.value;
+    selection = { start: source.length, end: source.length };
+    renderedSource = "";
     render(false);
     props.ref?.(handle());
     document.addEventListener("selectionchange", handleSelectionChange);

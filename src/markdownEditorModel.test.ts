@@ -2,7 +2,6 @@ import { describe, expect, test } from "vitest";
 import {
   applyMarkdownEdit,
   markdownTokens,
-  moveCaretAcrossInlineToken,
   moveCaretIntoInlineToken,
   moveCaretToInlineTokenEnd,
   previousGraphemeBoundary,
@@ -45,16 +44,12 @@ describe("Markdown editor model", () => {
     const value = "Before **bold** after";
     expect(moveCaretIntoInlineToken(value, { start: 7, end: 7 }, "right"))
       .toEqual({ start: 7, end: 7 });
+    expect(moveCaretIntoInlineToken(value, { start: 9, end: 9 }, "right"))
+      .toEqual({ start: 7, end: 7 });
     expect(moveCaretIntoInlineToken(value, { start: 15, end: 15 }, "left"))
       .toEqual({ start: 15, end: 15 });
-  });
-
-  test("moves one visual step out of inline Markdown wrappers", () => {
-    const value = "Before **bold** after ~~done~~";
-    expect(moveCaretAcrossInlineToken(value, { start: 13, end: 13 }, "right"))
+    expect(moveCaretIntoInlineToken(value, { start: 13, end: 13 }, "left"))
       .toEqual({ start: 15, end: 15 });
-    expect(moveCaretAcrossInlineToken(value, { start: 24, end: 24 }, "left"))
-      .toEqual({ start: 22, end: 22 });
   });
 
   test("moves a returning caret to the end of its inline wrapper", () => {
@@ -67,8 +62,8 @@ describe("Markdown editor model", () => {
 
   test("does not hijack non-boundary or range selection navigation", () => {
     const value = "**bold**";
-    expect(moveCaretAcrossInlineToken(value, { start: 3, end: 3 }, "right")).toBeNull();
-    expect(moveCaretAcrossInlineToken(value, { start: 2, end: 4 }, "right")).toBeNull();
+    expect(moveCaretIntoInlineToken(value, { start: 3, end: 3 }, "right")).toBeNull();
+    expect(moveCaretIntoInlineToken(value, { start: 2, end: 4 }, "right")).toBeNull();
   });
 
   test("deletes complete graphemes rather than splitting an emoji sequence", () => {

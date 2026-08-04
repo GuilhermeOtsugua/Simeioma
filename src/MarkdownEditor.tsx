@@ -2,7 +2,6 @@ import { createEffect, onCleanup, onMount, type JSX } from "solid-js";
 import {
   applyMarkdownEdit,
   markdownTokens,
-  moveCaretAcrossInlineToken,
   moveCaretIntoInlineToken,
   moveCaretToInlineTokenEnd,
   nextGraphemeBoundary,
@@ -50,6 +49,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   let isFocused = false;
   let pointerFocusPending = false;
   let revealedTokenFrom: number | null = null;
+  let pendingArrowDirection: "left" | "right" | null = null;
   let compositionHistoryRecorded = false;
   let renderedSource = "";
   let renderedSelection = "";
@@ -327,7 +327,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     if (!next) return;
     selection = next;
     const revealedToken = markdownTokens(source).find((token) => token.from === revealedTokenFrom);
-    if (!revealedToken || next.start !== next.end || (next.start !== revealedToken.from && next.start !== revealedToken.to)) {
+    if (!revealedToken || next.start !== next.end || next.start < revealedToken.from || next.start > revealedToken.to) {
       revealedTokenFrom = null;
     }
 
@@ -447,31 +447,44 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     notify();
   };
 
+  const reconcileArrowNavigation = (direction: "left" | "right") => {
+    const entering = moveCaretIntoInlineToken(source, selection, direction);
+    if (entering) {
+      const token = markdownTokens(source).find((item) => direction === "right" ? item.from === entering.start : item.to === entering.start);
+      if (token && revealedTokenFrom !== token.from) {
+        selection = entering;
+        revealedTokenFrom = token.from;
+        renderedSource = "";
+        return;
+      }
+    }
+
+    const revealedToken = markdownTokens(source).find((token) => token.from === revealedTokenFrom);
+    if (!revealedToken) return;
+    if ((direction === "right" && selection.start === revealedToken.to) || (direction === "left" && selection.start === revealedToken.from)) {
+      revealedTokenFrom = null;
+      renderedSource = "";
+    }
+  };
+
   const handleKeyDown: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
     if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       rememberSelection();
       const direction = event.key === "ArrowLeft" ? "left" : "right";
       const entering = moveCaretIntoInlineToken(source, selection, direction);
       if (entering) {
-        const token = markdownTokens(source).find((item) => direction === "right" ? item.from === selection.start : item.to === selection.start);
+        const token = markdownTokens(source).find((item) => direction === "right" ? item.from === entering.start : item.to === entering.start);
         if (token && revealedTokenFrom !== token.from) {
           event.preventDefault();
           selection = entering;
           revealedTokenFrom = token.from;
+          pendingArrowDirection = null;
           renderedSource = "";
           render();
           return;
         }
       }
-      const exiting = moveCaretAcrossInlineToken(source, selection, direction);
-      if (exiting) {
-        event.preventDefault();
-        selection = exiting;
-        revealedTokenFrom = null;
-        renderedSource = "";
-        render();
-        return;
-      }
+      pendingArrowDirection = direction;
     }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
       event.preventDefault();
@@ -596,6 +609,8 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       onClick={handleClick}
       onKeyUp={() => {
         rememberSelection();
+        if (pendingArrowDirection) reconcileArrowNavigation(pendingArrowDirection);
+        pendingArrowDirection = null;
         render();
       }}
       onPointerUp={() => {

@@ -26,6 +26,7 @@ import {
   isReminderDue,
   markNoteViewed,
   reminderNotes,
+  removeNoteFromState,
   resetNotesForDebug,
   unviewedReminderCount,
   unviewedReminderNotes,
@@ -536,7 +537,7 @@ function NotesListWindow() {
 
   const deleteNote = async (id: string) => {
     const latest = loadState();
-    const next = { ...latest, notes: latest.notes.filter((note) => note.id !== id) };
+    const next = removeNoteFromState(latest, id);
     saveState(next);
     setState(next);
     const noteWindow = await WebviewWindow.getByLabel(noteLabel(id));
@@ -906,6 +907,13 @@ function NoteWindow(props: { noteId: string }) {
     updateNote(props.noteId, (item) => ({ ...item, ...patch, updatedAt: new Date().toISOString() }), { setState });
   };
 
+  const deleteCurrentNote = async () => {
+    const next = removeNoteFromState(loadState(), props.noteId);
+    saveState(next);
+    setState(next);
+    await closeCurrentWindow();
+  };
+
   const updateBodyText = (rawText: string) => {
     const current = note();
     if (!current) return;
@@ -1047,6 +1055,13 @@ function NoteWindow(props: { noteId: string }) {
                   onClick={() => closeCurrentWindow()}
                 >
                   Close
+                </button>
+                <button
+                  type="button"
+                  class="note-menu-action delete-action"
+                  onClick={() => void deleteCurrentNote()}
+                >
+                  Delete note
                 </button>
               </div>
             </Show>

@@ -12,6 +12,7 @@ import {
   updateNotePosition,
   updateNoteSize,
   reminderNotes,
+  removeNoteFromState,
   resetNotesForDebug,
   unviewedReminderCount,
   unviewedReminderNotes,
@@ -75,6 +76,17 @@ describe("Simeioma model", () => {
     expect(result.note).toBeNull();
     expect(result.state.notes).toHaveLength(MAX_NOTES);
     expect(result.state.launcher.colorIndex).toBe(cappedColorIndex);
+  });
+
+  test("removes one note without changing the remaining session state", () => {
+    const first = createNoteInState(createInitialState(0), { id: "note-1", lineId: "line-1", now: "2026-05-18T12:00:00.000Z" });
+    const second = createNoteInState(first.state, { id: "note-2", lineId: "line-2", now: "2026-05-18T12:01:00.000Z" });
+
+    const result = removeNoteFromState(second.state, "note-1");
+
+    expect(result.notes.map((note) => note.id)).toEqual(["note-2"]);
+    expect(result.launcher).toBe(second.state.launcher);
+    expect(result.settings).toBe(second.state.settings);
   });
 
   test("resets notes for debug while preserving settings and launcher", () => {

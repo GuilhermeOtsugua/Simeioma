@@ -127,6 +127,10 @@ export function resetNotesForDebug(state: AppState): AppState {
   return { ...state, notes: [] };
 }
 
+export function removeNoteFromState(state: AppState, noteId: string): AppState {
+  return { ...state, notes: state.notes.filter((note) => note.id !== noteId) };
+}
+
 export function nextNotePosition(index: number, origin: { x: number; y: number }) {
   const stackIndex = index % MAX_NOTES;
   return {

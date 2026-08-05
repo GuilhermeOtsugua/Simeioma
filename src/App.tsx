@@ -42,7 +42,7 @@ import {
   type SketchStrokeRecord,
 } from "./simeiomaModel";
 import { keyCombo, matchesCombo, pointerCombo } from "./inputCombos";
-import { renderMarkdownPreview } from "./markdownPreview";
+import { MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
 import {
   clearSketchCanvas,
   coalescedPointerEvents,
@@ -53,17 +53,6 @@ import {
   startSketch,
   type SketchStroke,
 } from "./sketch";
-import {
-  collapsedEditorEndRange,
-  currentEditorRange,
-  editablePlainText,
-  editableSelectionOffsets,
-  editorHasFocusOrSelection,
-  hasActiveTextSelection,
-  selectEditorRange,
-  setEditorSelectionOffsets,
-  syncEditableText,
-} from "./textSelection";
 import { SettingsPanel } from "./settingsPanel";
 import {
   clampParkingDelta,
@@ -570,47 +559,25 @@ function NoteWindow(props: { noteId: string }) {
   const [state, setState] = createSignal(loadState());
   const [paletteOpen, setPaletteOpen] = createSignal(false);
   const [scribble, setScribble] = createSignal(false);
-  const [bodyFocused, setBodyFocused] = createSignal(true);
-  const [rightFocused, setRightFocused] = createSignal(false);
   let canvasRef: HTMLCanvasElement | undefined;
-  let bodyRef: HTMLDivElement | undefined;
-  let rightBodyRef: HTMLDivElement | undefined;
+  let bodyEditor: MarkdownEditorHandle | undefined;
+  let rightEditor: MarkdownEditorHandle | undefined;
   let activeStroke: SketchStroke | null = null;
   let canvasRedrawFrame: number | undefined;
   let noteDragTimer: number | undefined;
   let notePointerDownAt: { x: number; y: number } | null = null;
   let resizingNote = false;
   let resizeStart: { x: number; y: number; width: number; height: number } | null = null;
-  let bodySelectionRange: Range | null = null;
-  let rightSelectionRange: Range | null = null;
+  let bodySelection: { start: number; end: number } | null = null;
+  let rightSelection: { start: number; end: number } | null = null;
 
   const note = createMemo(() => state().notes.find((item) => item.id === props.noteId));
   const noteColor = createMemo(() => getColor(note()?.colorKey));
   const otherNotes = createMemo(() => state().notes.filter((item) => item.id !== props.noteId));
   const storedBodyText = createMemo(() => note()?.lines.map((line) => line.text).join("\n") ?? "");
   const storedRightText = createMemo(() => note()?.rightText ?? "");
-  const [bodyDraft, setBodyDraft] = createSignal("");
-  const [rightDraft, setRightDraft] = createSignal("");
-  const bodyText = createMemo(() => bodyDraft());
-  const rightText = createMemo(() => rightDraft());
   const mentions = createMemo(() => collectMentions(note(), otherNotes()));
   const itemLayoutIsTwoColumn = createMemo(() => note()?.layout === "two-column");
-
-  createEffect(() => {
-    if (!editorHasFocusOrSelection(bodyRef)) {
-      const text = storedBodyText();
-      setBodyDraft(text);
-      syncEditableText(bodyRef, text);
-    }
-  });
-
-  createEffect(() => {
-    if (!editorHasFocusOrSelection(rightBodyRef)) {
-      const text = storedRightText();
-      setRightDraft(text);
-      syncEditableText(rightBodyRef, text);
-    }
-  });
 
   const createNoteFromShortcut = () => enqueueNoteCreation(async () => {
     const latest = loadState();
@@ -634,7 +601,8 @@ function NoteWindow(props: { noteId: string }) {
     const current = note();
 
     if (combo === currentSettings.copyNoteKeybind && current) {
-      if (hasActiveTextSelection(bodyRef)) return;
+      const bodySelection = bodyEditor?.selection();
+      if (bodySelection && bodySelection.start !== bodySelection.end) return;
       event.preventDefault();
       void copyText(noteToMarkdown(current));
       return;
@@ -646,7 +614,7 @@ function NoteWindow(props: { noteId: string }) {
       return;
     }
 
-    if (combo === "Ctrl + Z" && current?.sketchStrokes?.length && document.activeElement !== bodyRef && document.activeElement !== rightBodyRef) {
+    if (combo === "Ctrl + Z" && current?.sketchStrokes?.length && document.activeElement !== bodyEditor?.element && document.activeElement !== rightEditor?.element) {
       event.preventDefault();
       patchNote({ sketchStrokes: current.sketchStrokes.slice(0, -1), sketchData: undefined });
       return;
@@ -767,91 +735,56 @@ function NoteWindow(props: { noteId: string }) {
     }
   };
 
-  const editorForField = (field: string) => field === "right" ? rightBodyRef : bodyRef;
+  const editorForField = (field: string) => field === "right" ? rightEditor : bodyEditor;
 
-  const syncEditorValue = (field: string, editor: HTMLElement) => {
-    const text = editablePlainText(editor);
-    if (field === "right") {
-      setRightDraft(text);
-      updateRightText(text);
-    } else {
-      setBodyDraft(text);
-      updateBodyText(text);
-    }
-    growBody();
-  };
-
-  const storeEditorRange = (field: string, range: Range) => {
-    if (field === "right") rightSelectionRange = range.cloneRange();
-    else bodySelectionRange = range.cloneRange();
-  };
-
-  const storedEditorRange = (field: string) => {
-    const range = field === "right" ? rightSelectionRange : bodySelectionRange;
-    return range?.cloneRange() ?? null;
+  const storeEditorSelection = (field: string) => {
+    const editor = editorForField(field);
+    if (!editor) return;
+    if (field === "right") rightSelection = editor.selection();
+    else bodySelection = editor.selection();
   };
 
   const applyTextMenuCommand = async (field: string, command: string, payloadText = "") => {
     const target = editorForField(field);
     if (!target) return;
-    const range = storedEditorRange(field) ?? currentEditorRange(target) ?? collapsedEditorEndRange(target);
-    selectEditorRange(range);
     if (command === "paste") {
-      const text = payloadText || await readClipboardText();
-      range.deleteContents();
-      const inserted = document.createTextNode(text);
-      range.insertNode(inserted);
-      range.setStartAfter(inserted);
-      range.collapse(true);
-      storeEditorRange(field, range);
-      selectEditorRange(range);
-      syncEditorValue(field, target);
+      target.replaceSelection(payloadText || await readClipboardText());
       return;
     }
     if (command === "cut") {
-      const selected = range.toString();
-      if (!selected) return;
-      await copyText(selected);
-      range.deleteContents();
-      range.collapse(true);
-      storeEditorRange(field, range);
-      selectEditorRange(range);
-      syncEditorValue(field, target);
+      const selected = target.cutSelection();
+      if (selected) await copyText(selected);
       return;
     }
     if (command === "copy") {
-      const selected = range.toString();
+      const selected = target.copySelection();
       if (selected) await copyText(selected);
       return;
     }
     if (command === "select-all") {
-      const next = document.createRange();
-      next.selectNodeContents(target);
-      storeEditorRange(field, next);
-      selectEditorRange(next);
+      target.selectAll();
+      storeEditorSelection(field);
       return;
     }
     if (command === "dir-ltr" || command === "dir-rtl") {
-      target.dir = command.replace("dir-", "") as "ltr" | "rtl";
+      target.setDirection(command.replace("dir-", "") as "ltr" | "rtl");
     }
   };
 
-  const rememberTextSelection = (field: "body" | "right") => {
-    const target = editorForField(field);
-    const range = target ? currentEditorRange(target) : null;
-    if (range) storeEditorRange(field, range);
-  };
+  const rememberTextSelection = (field: "body" | "right") => storeEditorSelection(field);
 
   const openTextMenu = (event: MouseEvent, field: "body" | "right", directEditor = true) => {
     event.preventDefault();
     event.stopPropagation();
     const target = editorForField(field);
     if (!target) return;
-    const range = directEditor ? currentEditorRange(target) ?? collapsedEditorEndRange(target) : collapsedEditorEndRange(target);
-    if (!directEditor) target.focus();
-    storeEditorRange(field, range);
-    selectEditorRange(range);
-    void openTextMenuPopupWindow(props.noteId, field, event.clientX, event.clientY, !range.collapsed, 0, 0);
+    if (!directEditor) {
+      target.focus();
+      target.collapseToEnd();
+    }
+    storeEditorSelection(field);
+    const selection = field === "right" ? rightSelection : bodySelection;
+    void openTextMenuPopupWindow(props.noteId, field, event.clientX, event.clientY, Boolean(selection && selection.start !== selection.end), selection?.start ?? 0, selection?.end ?? 0);
   };
 
   const startNoteResize = async (event: PointerEvent) => {
@@ -940,12 +873,12 @@ function NoteWindow(props: { noteId: string }) {
     const target = event.target as HTMLElement;
     const column = target.closest(".note-column");
     if (!column || target.closest("button, input, select, .note-context-menu, .note-resize-handle")) return;
-    if (column.querySelector('[aria-label="Note right column"]')) setRightFocused(true);
-    else setBodyFocused(true);
+    const editor = column.querySelector<HTMLElement>('[aria-label="Note right column"], [aria-label="Note line"]');
+    editor?.focus();
   };
 
   const growBody = async () => {
-    const visibleEditors = [bodyRef, itemLayoutIsTwoColumn() ? rightBodyRef : undefined].filter(Boolean) as HTMLDivElement[];
+    const visibleEditors = [bodyEditor?.element, itemLayoutIsTwoColumn() ? rightEditor?.element : undefined].filter(Boolean) as HTMLDivElement[];
     if (!visibleEditors.length) return;
     let nextHeight = 0;
     for (const editor of visibleEditors) {
@@ -1076,110 +1009,59 @@ function NoteWindow(props: { noteId: string }) {
           >
             <div class="note-columns" classList={{ "is-two-column": item().layout === "two-column" }}>
               <div class="note-column">
-                <div class="note-editor-stack" classList={{ "is-editing": bodyFocused() }}>
-                  <div
-                    class="note-body-preview"
-                    classList={{ "is-empty": !bodyText().trim() }}
-                    onClick={() => setBodyFocused(true)}
-                  >
-                    {renderMarkdownPreview(bodyText())}
-                  </div>
-                  <div
-                    ref={bodyRef}
-                    class="note-body-editor"
-                    role="textbox"
-                    aria-label="Note line"
-                    data-line-id={item().lines[0]?.id ?? item().id}
-                    data-placeholder="Write..."
-                    contenteditable="plaintext-only"
-                    spellcheck={false}
-                    onPointerDown={(event) => {
-                      if (event.button === 2) {
-                        rememberTextSelection("body");
-                        event.preventDefault();
-                      }
-                    }}
-                    onContextMenu={(event) => openTextMenu(event, "body")}
-                    onKeyUp={() => rememberTextSelection("body")}
-                    onPointerUp={() => rememberTextSelection("body")}
-                    onClick={(event) => {
-                      if (event.ctrlKey) {
-                        event.preventDefault();
-                        const next = toggleCurrentEditableLineStrike(event.currentTarget);
-                        setBodyDraft(next);
-                        updateBodyText(next);
-                      }
-                    }}
-                    onInput={(event) => {
-                      const text = editablePlainText(event.currentTarget);
-                      setBodyDraft(text);
-                      updateBodyText(text);
+                <MarkdownEditor
+                  ref={(handle) => (bodyEditor = handle)}
+                  value={storedBodyText()}
+                  label="Note line"
+                  placeholder="Write..."
+                  onValue={(text) => {
+                    updateBodyText(text);
+                    rememberTextSelection("body");
+                    void growBody();
+                  }}
+                  onLayoutChange={() => void growBody()}
+                  onPointerDown={(event) => {
+                    if (event.button === 2) {
                       rememberTextSelection("body");
-                      growBody();
-                    }}
-                    onFocus={() => {
-                      setBodyFocused(true);
-                      rememberTextSelection("body");
-                      growBody();
-                    }}
-                    onBlur={() => {
-                      syncAfterLineEdit();
-                      window.setTimeout(() => {
-                        if (!editorHasFocusOrSelection(bodyRef)) setBodyFocused(false);
-                      }, 0);
-                    }}
-                  />
-                </div>
+                      event.preventDefault();
+                    }
+                  }}
+                  onContextMenu={(event) => openTextMenu(event, "body")}
+                  onFocus={() => {
+                    rememberTextSelection("body");
+                    void growBody();
+                  }}
+                  onBlur={syncAfterLineEdit}
+                />
               </div>
 
               <Show when={item().layout === "two-column"}>
                 <div class="note-column-divider" aria-hidden="true" />
                 <div class="note-column">
-                  <div class="note-editor-stack" classList={{ "is-editing": rightFocused() }}>
-                    <div
-                      class="note-body-preview"
-                      classList={{ "is-empty": !rightText().trim() }}
-                      onClick={() => setRightFocused(true)}
-                    >
-                      {renderMarkdownPreview(rightText())}
-                    </div>
-                    <div
-                      ref={rightBodyRef}
-                      class="note-body-editor"
-                      role="textbox"
-                      aria-label="Note right column"
-                      data-placeholder="Write..."
-                      contenteditable="plaintext-only"
-                      spellcheck={false}
-                      onPointerDown={(event) => {
-                        if (event.button === 2) {
-                          rememberTextSelection("right");
-                          event.preventDefault();
-                        }
-                      }}
-                      onContextMenu={(event) => openTextMenu(event, "right")}
-                      onKeyUp={() => rememberTextSelection("right")}
-                      onPointerUp={() => rememberTextSelection("right")}
-                      onInput={(event) => {
-                        const text = editablePlainText(event.currentTarget);
-                        setRightDraft(text);
-                        updateRightText(text);
+                  <MarkdownEditor
+                    ref={(handle) => (rightEditor = handle)}
+                    value={storedRightText()}
+                    label="Note right column"
+                    placeholder="Write..."
+                    onValue={(text) => {
+                      updateRightText(text);
+                      rememberTextSelection("right");
+                      void growBody();
+                    }}
+                    onLayoutChange={() => void growBody()}
+                    onPointerDown={(event) => {
+                      if (event.button === 2) {
                         rememberTextSelection("right");
-                        growBody();
-                      }}
-                      onFocus={() => {
-                        setRightFocused(true);
-                        rememberTextSelection("right");
-                        growBody();
-                      }}
-                      onBlur={() => {
-                        syncAfterLineEdit();
-                        window.setTimeout(() => {
-                          if (!editorHasFocusOrSelection(rightBodyRef)) setRightFocused(false);
-                        }, 0);
-                      }}
-                    />
-                  </div>
+                        event.preventDefault();
+                      }
+                    }}
+                    onContextMenu={(event) => openTextMenu(event, "right")}
+                    onFocus={() => {
+                      rememberTextSelection("right");
+                      void growBody();
+                    }}
+                    onBlur={syncAfterLineEdit}
+                  />
                 </div>
               </Show>
             </div>
@@ -1981,7 +1863,7 @@ async function openNotesListWindow() {
 
 function focusFirstLine() {
   window.setTimeout(() => {
-    document.querySelector<HTMLElement>("[data-line-id]")?.focus();
+    document.querySelector<HTMLElement>(".markdown-editor")?.focus();
   }, 0);
 }
 
@@ -2016,20 +1898,6 @@ function shouldBlockNoteDrag(event: PointerEvent) {
   if (target.closest(".note-body-preview")) return true;
 
   return false;
-}
-
-function toggleCurrentEditableLineStrike(editor: HTMLElement) {
-  const value = editablePlainText(editor);
-  const cursor = editableSelectionOffsets(editor)?.start ?? value.length;
-  const lineStart = value.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
-  const nextBreak = value.indexOf("\n", cursor);
-  const lineEnd = nextBreak === -1 ? value.length : nextBreak;
-  const line = value.slice(lineStart, lineEnd);
-  const replacement = line.startsWith("~~") && line.endsWith("~~") ? line.slice(2, -2) : `~~${line}~~`;
-  const next = `${value.slice(0, lineStart)}${replacement}${value.slice(lineEnd)}`;
-  editor.textContent = next;
-  setEditorSelectionOffsets(editor, lineStart, lineStart + replacement.length);
-  return next;
 }
 
 function notesToMarkdown(notes: Note[]) {

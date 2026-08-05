@@ -7,8 +7,7 @@ type MarkdownBlock =
   | { type: "bullet"; text: string }
   | { type: "numbered"; marker: string; text: string }
   | { type: "quote"; text: string }
-  | { type: "code"; text: string }
-  | { type: "hr" };
+  | { type: "code"; text: string };
 
 export function renderMarkdownPreview(value: string) {
   const blocks = parseMarkdownBlocks(value);
@@ -71,11 +70,6 @@ function parseMarkdownBlocks(value: string): MarkdownBlock[] {
       continue;
     }
 
-    if (/^(-{3,}|_{3,}|\*{3,})$/.test(trimmed)) {
-      blocks.push({ type: "hr" });
-      continue;
-    }
-
     blocks.push({ type: "paragraph", text: line });
   }
 
@@ -106,9 +100,6 @@ function renderMarkdownBlock(block: MarkdownBlock) {
   }
   if (block.type === "code") {
     return <pre class="preview-code-block"><code>{block.text || " "}</code></pre>;
-  }
-  if (block.type === "hr") {
-    return <hr class="preview-hr" />;
   }
   return <p>{renderInlineMarkdown(block.text || " ")}</p>;
 }

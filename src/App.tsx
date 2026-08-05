@@ -1019,6 +1019,7 @@ function NoteWindow(props: { noteId: string }) {
                     rememberTextSelection("body");
                     void growBody();
                   }}
+                  onLayoutChange={() => void growBody()}
                   onPointerDown={(event) => {
                     if (event.button === 2) {
                       rememberTextSelection("body");
@@ -1047,6 +1048,7 @@ function NoteWindow(props: { noteId: string }) {
                       rememberTextSelection("right");
                       void growBody();
                     }}
+                    onLayoutChange={() => void growBody()}
                     onPointerDown={(event) => {
                       if (event.button === 2) {
                         rememberTextSelection("right");

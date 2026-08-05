@@ -3,7 +3,6 @@ import {
   applyMarkdownEdit,
   markdownTokens,
   moveCaretIntoInlineToken,
-  moveCaretToInlineTokenEnd,
   nextGraphemeBoundary,
   previousGraphemeBoundary,
   toggleStrikethrough,
@@ -33,6 +32,7 @@ type MarkdownEditorProps = {
   onFocus?: () => void;
   onBlur?: () => void;
   onChange?: () => void;
+  onLayoutChange?: () => void;
   onContextMenu?: (event: MouseEvent) => void;
   onPointerDown?: (event: PointerEvent) => void;
   ref?: (handle: MarkdownEditorHandle) => void;
@@ -47,7 +47,6 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   let selection: SourceSelection = { start: source.length, end: source.length };
   let composing = false;
   let isFocused = false;
-  let pointerFocusPending = false;
   let pendingStrikeSelection: SourceSelection | null = null;
   let revealedTokenFrom: number | null = null;
   let pendingArrowDirection: "left" | "right" | null = null;
@@ -81,6 +80,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     element.replaceChildren(fragment);
     renderedSource = source;
     renderedSelection = selectionKey;
+    queueMicrotask(() => props.onLayoutChange?.());
     if (restoreSelection && document.activeElement === element) setDomSelection(selection);
   };
 
@@ -148,12 +148,6 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     if (quote) {
       row.classList.add("is-quote");
       appendSourceSegment(row, quote[1] || " ", line.from + line.text.length - quote[1].length);
-      return row;
-    }
-
-    if (/^(-{3,}|_{3,}|\*{3,})$/.test(line.text.trim())) {
-      row.classList.add("is-rule");
-      row.contentEditable = "false";
       return row;
     }
 
@@ -268,15 +262,10 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     activeTokenStarts = new Set();
     activeLineIndexes = new Set();
     if (forceInactive || (!isFocused && document.activeElement !== element)) return;
-    const isCollapsed = selection.start === selection.end;
-    for (const token of markdownTokens(source)) {
-      const selected = isCollapsed
-        ? selection.start > token.from && selection.start < token.to
-        : selection.start < token.to && selection.end > token.from;
-      if (selected || (isCollapsed && revealedTokenFrom === token.from && (selection.start === token.from || selection.start === token.to))) {
-        activeTokenStarts.add(token.from);
-      }
+    if (revealedTokenFrom !== null && markdownTokens(source).some((token) => token.from === revealedTokenFrom)) {
+      activeTokenStarts.add(revealedTokenFrom);
     }
+    const isCollapsed = selection.start === selection.end;
     for (const line of lines()) {
       const prefix = line.text.match(/^(#{1,6}\s+|>\s?|[-*+]\s+|- \[[ xX]\]\s+|\d+[.)]\s+)/)?.[0];
       if (!prefix) continue;
@@ -392,6 +381,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     if (event.inputType === "insertFromPaste" || event.inputType === "insertFromDrop") result = applyMarkdownEdit(source, range, event.dataTransfer?.getData("text/plain") ?? event.data ?? "");
     if (event.inputType === "deleteContentBackward" || event.inputType === "deleteWordBackward" || event.inputType === "deleteSoftLineBackward") result = deleteBackward(range);
     if (event.inputType === "deleteContentForward" || event.inputType === "deleteWordForward" || event.inputType === "deleteSoftLineForward") result = deleteForward(range);
+    if (event.inputType === "deleteByCut") result = applyMarkdownEdit(source, range, "");
     if (event.inputType === "formatStrikeThrough") result = toggleStrikethrough(source, range);
 
     if (!result) return;
@@ -614,7 +604,6 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       onInput={syncComposition}
       onContextMenu={(event) => props.onContextMenu?.(event)}
       onPointerDown={(event) => {
-        pointerFocusPending = true;
         revealedTokenFrom = null;
         if (event.ctrlKey && event.button === 0) {
           const existing = selectionFromDom();
@@ -636,26 +625,16 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
         render();
       }}
       onPointerUp={() => {
-        pointerFocusPending = false;
         if (pendingStrikeSelection) return;
         rememberSelection();
         render();
       }}
       onPointerCancel={() => {
-        pointerFocusPending = false;
         pendingStrikeSelection = null;
       }}
       onFocus={() => {
         isFocused = true;
         rememberSelection();
-        if (!pointerFocusPending) {
-          const token = markdownTokens(source).find((item) => selection.start === selection.end && selection.start > item.from && selection.start <= item.to);
-          if (token) {
-            selection = moveCaretToInlineTokenEnd(source, selection);
-            revealedTokenFrom = token.from;
-          }
-        }
-        pointerFocusPending = false;
         props.onFocus?.();
         renderedSource = "";
         render();

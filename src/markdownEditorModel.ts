@@ -21,12 +21,6 @@ export function markdownTokens(value: string, offset = 0): MarkdownToken[] {
   return tokens;
 }
 
-export function moveCaretToInlineTokenEnd(value: string, selection: SourceSelection): SourceSelection {
-  if (selection.start !== selection.end) return selection;
-  const token = markdownTokens(value).find((item) => selection.start > item.from && selection.start < item.to);
-  return token ? { start: token.to, end: token.to } : selection;
-}
-
 export function moveCaretIntoInlineToken(
   value: string,
   selection: SourceSelection,
@@ -89,14 +83,15 @@ export function wrapSelectionWithStrikethrough(value: string, selection: SourceS
   if (range.start === range.end) {
     return {
       value: `${value.slice(0, range.start)}~~~~${value.slice(range.end)}`,
-      selection: { start: range.start + 2, end: range.start + 2 },
+      selection: { start: range.start + 4, end: range.start + 4 },
     };
   }
 
   const selected = value.slice(range.start, range.end);
+  const caret = range.end + 4;
   return {
     value: `${value.slice(0, range.start)}~~${selected}~~${value.slice(range.end)}`,
-    selection: { start: range.start + 2, end: range.end + 2 },
+    selection: { start: caret, end: caret },
   };
 }
 

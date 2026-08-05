@@ -3,7 +3,6 @@ import {
   applyMarkdownEdit,
   markdownTokens,
   moveCaretIntoInlineToken,
-  moveCaretToInlineTokenEnd,
   previousGraphemeBoundary,
   toggleStrikethrough,
   wrapSelectionWithStrikethrough,
@@ -26,29 +25,35 @@ describe("Markdown editor model", () => {
       .toEqual([]);
   });
 
+
   test("replaces the selected source range and positions the caret after inserted text", () => {
     expect(applyMarkdownEdit("A small note", { start: 2, end: 7 }, "bright"))
       .toEqual({ value: "A bright note", selection: { start: 8, end: 8 } });
   });
 
-  test("wraps selected text in source strikethrough markers", () => {
-    expect(wrapSelectionWithStrikethrough("Plan lunch", { start: 5, end: 10 }))
-      .toEqual({ value: "Plan ~~lunch~~", selection: { start: 7, end: 12 } });
+  test("removes a selected source range for a cut transaction", () => {
+    expect(applyMarkdownEdit("A small note", { start: 2, end: 7 }, ""))
+      .toEqual({ value: "A  note", selection: { start: 2, end: 2 } });
   });
 
-  test("inserts empty strikethrough markers when no text is selected", () => {
+  test("collapses the caret after a new strikethrough wrapper", () => {
+    expect(wrapSelectionWithStrikethrough("Plan lunch", { start: 5, end: 10 }))
+      .toEqual({ value: "Plan ~~lunch~~", selection: { start: 14, end: 14 } });
+  });
+
+  test("places the caret after empty strikethrough markers", () => {
     expect(wrapSelectionWithStrikethrough("Plan", { start: 4, end: 4 }))
-      .toEqual({ value: "Plan~~~~", selection: { start: 6, end: 6 } });
+      .toEqual({ value: "Plan~~~~", selection: { start: 8, end: 8 } });
   });
 
   test("wraps the word under a collapsed strikethrough command", () => {
     expect(toggleStrikethrough("Plan lunch", { start: 7, end: 7 }))
-      .toEqual({ value: "Plan ~~lunch~~", selection: { start: 7, end: 12 } });
+      .toEqual({ value: "Plan ~~lunch~~", selection: { start: 14, end: 14 } });
   });
 
   test("wraps a selected range and toggles an existing strikethrough wrapper off", () => {
     expect(toggleStrikethrough("Plan lunch", { start: 5, end: 10 }))
-      .toEqual({ value: "Plan ~~lunch~~", selection: { start: 7, end: 12 } });
+      .toEqual({ value: "Plan ~~lunch~~", selection: { start: 14, end: 14 } });
     expect(toggleStrikethrough("Plan ~~lunch~~", { start: 7, end: 12 }))
       .toEqual({ value: "Plan lunch", selection: { start: 5, end: 10 } });
   });
@@ -60,7 +65,7 @@ describe("Markdown editor model", () => {
 
   test("only changes the targeted term when multiple strikethrough tokens exist", () => {
     expect(toggleStrikethrough("~~alpha~~ beta", { start: 12, end: 12 }))
-      .toEqual({ value: "~~alpha~~ ~~beta~~", selection: { start: 12, end: 16 } });
+      .toEqual({ value: "~~alpha~~ ~~beta~~", selection: { start: 18, end: 18 } });
     expect(toggleStrikethrough("~~alpha~~ ~~beta~~", { start: 3, end: 3 }))
       .toEqual({ value: "alpha ~~beta~~", selection: { start: 1, end: 1 } });
   });
@@ -75,14 +80,6 @@ describe("Markdown editor model", () => {
       .toEqual({ start: 15, end: 15 });
     expect(moveCaretIntoInlineToken(value, { start: 13, end: 13 }, "left"))
       .toEqual({ start: 15, end: 15 });
-  });
-
-  test("moves a returning caret to the end of its inline wrapper", () => {
-    const value = "Before **bold** after";
-    expect(moveCaretToInlineTokenEnd(value, { start: 11, end: 11 }))
-      .toEqual({ start: 15, end: 15 });
-    expect(moveCaretToInlineTokenEnd(value, { start: 7, end: 10 }))
-      .toEqual({ start: 7, end: 10 });
   });
 
   test("does not hijack non-boundary or range selection navigation", () => {

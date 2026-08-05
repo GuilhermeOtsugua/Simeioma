@@ -829,12 +829,6 @@ svg {
   color: color-mix(in srgb, var(--note-ink), transparent 18%);
 }
 
-.markdown-editor-line.is-rule {
-  min-height: 1px;
-  margin: 8px 0;
-  background: color-mix(in srgb, var(--note-line), #000 8%);
-}
-
 .markdown-editor-token.is-source {
   color: color-mix(in srgb, var(--note-ink), transparent 16%);
 }
@@ -901,13 +895,6 @@ svg {
   padding-left: 8px;
   border-left: 2px solid color-mix(in srgb, var(--note-ink), transparent 56%);
   color: color-mix(in srgb, var(--note-ink), transparent 18%);
-}
-
-.note-body-preview .preview-hr {
-  height: 1px;
-  margin: 8px 0;
-  border: 0;
-  background: color-mix(in srgb, var(--note-line), #000 8%);
 }
 
 .note-body-preview .preview-code-block {

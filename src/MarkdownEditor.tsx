@@ -14,6 +14,7 @@ export type MarkdownEditorHandle = {
   element: HTMLDivElement;
   focus: () => void;
   selection: () => SourceSelection;
+  setSelection: (selection: SourceSelection) => void;
   selectAll: () => void;
   replaceSelection: (text: string) => void;
   cutSelection: () => string;
@@ -527,6 +528,14 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       setDomSelection(selection);
     },
     selection: () => ({ ...selection }),
+    setSelection: (next) => {
+      const start = Math.max(0, Math.min(next.start, source.length));
+      const end = Math.max(start, Math.min(next.end, source.length));
+      selection = { start, end };
+      revealedTokenFrom = null;
+      renderedSource = "";
+      render();
+    },
     selectAll: () => {
       selection = { start: 0, end: source.length };
       activeTokenStarts = new Set(markdownTokens(source).map((token) => token.from));

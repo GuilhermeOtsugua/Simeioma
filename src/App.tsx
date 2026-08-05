@@ -744,15 +744,20 @@ function NoteWindow(props: { noteId: string }) {
     else bodySelection = editor.selection();
   };
 
-  const applyTextMenuCommand = async (field: string, command: string, payloadText = "") => {
+  const applyTextMenuCommand = async (field: string, command: string, payloadText = "", start?: number, end?: number) => {
     const target = editorForField(field);
     if (!target) return;
+    if (Number.isInteger(start) && Number.isInteger(end) && command !== "select-all") {
+      target.setSelection({ start: start!, end: end! });
+    }
     if (command === "paste") {
       target.replaceSelection(payloadText || await readClipboardText());
+      syncAfterLineEdit();
       return;
     }
     if (command === "cut") {
       const selected = target.cutSelection();
+      syncAfterLineEdit();
       if (selected) await copyText(selected);
       return;
     }

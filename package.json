@@ -10,6 +10,7 @@
     "build:desktop": "tauri build",
     "build:desktop:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "test:watch": "vitest",
     "serve": "vite preview",
     "tauri": "tauri"

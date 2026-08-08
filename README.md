@@ -114,6 +114,7 @@ Use deterministic checks before considering a change complete:
 
 ```sh
 bun run test
+bun run typecheck
 bun run build
 cargo check --manifest-path src-tauri/Cargo.toml
 ```

@@ -15,6 +15,7 @@ native command changes may require a slower shell rebuild/restart.
 Before considering a change complete, run the deterministic checks:
 
 - `bun run test`
+- `bun run typecheck`
 - `bun run build`
 - `cargo check --manifest-path src-tauri/Cargo.toml`
 

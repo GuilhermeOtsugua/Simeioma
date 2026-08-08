@@ -26,13 +26,13 @@ Simeioma should be a single-instance desktop utility. Opening the app twice shou
 
 The launcher strip should create a note on the first left click, including when the window was not previously focused. It should not require a double click.
 
-The launcher strip should use `Ctrl + left click` to hide or show all open notes. The visibility change should feel like a fade where feasible.
+The launcher strip should use `Ctrl + left click` to hide visible notes or, when no note window is visible, show all saved notes. The visibility change should feel like a fade where feasible.
 
 The launcher list action should open a separate notes-list window, similar to the settings window. It must not reopen every stored or closed note.
 
-Creating multiple notes should produce a visible stack. Each subsequent note should be offset from the previous note by a small horizontal amount and by one note title-section height vertically.
+A release launch begins with saved notes hidden. When no note is visible, the first newly created note should use the launcher-origin baseline size and position. When notes are visible, the next note should stack from the latest visible note and inherit its size.
 
-Notes should be capped at ten total notes in the current session. Attempts to create more notes should do nothing visible and should not advance the launcher color cycle.
+Notes should be capped at ten total saved notes across sessions. Attempts to create more notes should do nothing visible and should not advance the launcher color cycle.
 
 Notes should be draggable by holding left click anywhere inside the note. The exception is scribble mode, where holding left click is reserved for drawing. Text editing should remain possible, but drag initiation should be more forgiving than the current title/body-specific behavior.
 

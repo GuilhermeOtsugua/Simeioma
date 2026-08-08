@@ -669,11 +669,6 @@ function sourceLines(value: string): SourceLine[] {
   });
 }
 
-function mustRevealLine(line: SourceLine, offset: number) {
-  const prefix = line.text.match(/^(#{1,6}\s+|>\s?|[-*+]\s+|- \[[ xX]\]\s+|\d+[.)]\s+)/)?.[0];
-  return Boolean(prefix && offset <= line.from + prefix.length);
-}
-
 function safeHref(href: string) {
   return /^(https?:|mailto:|#)/i.test(href) ? href : "#";
 }

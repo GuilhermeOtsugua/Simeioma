@@ -21,19 +21,22 @@ heavy documents.
 ## Stack
 
 - Tauri 2 for the native desktop shell and bundling
-- Rust for filesystem, persistence, export, and window control
-- Solid + TypeScript for the app interface
+- Rust for native windows, clipboard/filesystem integration, export, and process control
+- Solid + TypeScript for the app interface and source-first editor
+- WebView `localStorage` JSON for local note/session persistence
 - Tailwind CSS for the styling system
 - Bun for dependency management and scripts
 
 ## Product Direction
 
 - Persistent note-colored launcher strip near a screen corner
-- Hover expansion and instant note creation
-- Floating draggable notes with title, body, color, and sketch surface
-- Local-first autosave and session restore
+- Hover expansion, instant note creation, and visible-note-aware stacking
+- Floating draggable notes with title, color, resize, and adaptive sketch surface
+- Source-first `contenteditable` Markdown editing with inline formatting, selection, Cut, and strikethrough support
+- Local-first autosave; release sessions retain saved notes but begin with no note windows visible
+- Scrollable notes list with contextual note actions and confirmed bulk deletion
 - Bulk copy/download as text, Markdown, PNG, or JPEG
-- Settings for export path, default copy behavior, and keybinds
+- Settings for export path, default copy behavior, reminders, sketching, and keybinds
 
 ## Performance Budget
 
@@ -45,51 +48,75 @@ heavy documents.
 
 ## Development
 
-Install dependencies:
+### Prerequisites
+
+The primary development and QA workflow is native Windows. Install:
+
+- [Bun](https://bun.sh/)
+- Rust with the Windows MSVC toolchain
+- Visual Studio Build Tools with the **Desktop development with C++** workload
+
+Install JavaScript dependencies:
 
 ```sh
 bun install
 ```
 
-Run the web frontend when you only need the Vite page:
+### Native dev versus release QA
 
-```sh
+| Mode | Command or artifact | Use it for |
+| --- | --- | --- |
+| Web frontend only | `bun run dev` | Vite/UI work that does not need Tauri window behavior |
+| Native dev | `bun run tauri dev` | The default interactive desktop debugging loop |
+| Verbose native dev | `bun run tauri dev --verbose` | Tauri/Rust diagnostics alongside the native app |
+| Release QA | `src-tauri/target/release/simeioma.exe` | Persistence, packaging, and stable manual desktop validation |
+
+`bun run tauri dev` starts Vite at `http://localhost:1420` and launches the
+native debug shell against it. Frontend changes hot reload; Rust, Tauri config,
+permission, and native-command changes may trigger a slower shell rebuild or
+restart. Use it to debug launcher behavior, transparent windows, custom popups,
+drag/focus behavior, and text selection.
+
+> **Dev-session policy:** launching the dev app intentionally starts from a
+> clean note session. It clears saved notes and enables reminders and
+> copy-after-save for repeatable debugging. Use the release executable for
+> persistence QA or any notes you need to retain.
+
+A debug executable is produced after a native debug build at:
+
+```text
+src-tauri/target/debug/simeioma.exe
+```
+
+It is not a standalone packaged build: it expects the Vite dev server. Prefer
+`bun run tauri dev`; only launch it manually when Vite is already running:
+
+```powershell
 bun run dev
+.\src-tauri\target\debug\simeioma.exe
 ```
 
-Use the Tauri dev app as the default interactive debugging loop:
+### Windows release build
 
-```sh
-bun run tauri dev
-```
-
-This starts the Vite dev server and launches the native Tauri shell against it.
-Frontend changes hot reload; Rust, Tauri config, permission, and native command
-changes may trigger a slower shell rebuild/restart. This is the preferred way to
-debug launcher behavior, transparent windows, custom popups, drag/focus issues,
-and text selection before doing a production executable build.
-
-Build the frontend:
+Build the frontend alone:
 
 ```sh
 bun run build
 ```
 
-Build the Windows desktop executable for manual testing:
+Build a Windows release executable and installers:
 
 ```sh
 bun run build:desktop:windows
 ```
 
-The production executable is written to:
+`scripts/build-windows.ps1` locates Visual Studio Build Tools with `vswhere`,
+initializes the x64 MSVC environment, then runs `tauri build`.
+
+Artifacts:
 
 ```text
 src-tauri/target/release/simeioma.exe
-```
-
-The Windows installer bundles are written to:
-
-```text
 src-tauri/target/release/bundle/msi/Simeioma_1.0.0_x64_en-US.msi
 src-tauri/target/release/bundle/nsis/Simeioma_1.0.0_x64-setup.exe
 ```
@@ -104,13 +131,7 @@ bun run build:desktop:windows
 
 ## Debugging and Verification Strategy
 
-Use the Tauri dev app as the default loop for interactive desktop debugging:
-
-```sh
-bun run tauri dev
-```
-
-Use deterministic checks before considering a change complete:
+Run deterministic checks before considering a change complete:
 
 ```sh
 bun run test
@@ -119,20 +140,20 @@ bun run build
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
-These cover model behavior, frontend compilation, and Rust/Tauri compilation
-without relying on browser interaction tests that do not accurately represent the
-desktop app's native window, focus, drag, and selection behavior.
+These cover model behavior, frontend compilation, and Rust/Tauri compilation.
+They do not authoritatively prove native window, focus, drag, layout, or WebView
+selection behavior. Manual native QA is the source of truth for those contracts.
 
-Build the Windows executable only when you need a fresh artifact for stable
-manual desktop testing or release validation:
+For a fresh release artifact, test at least:
 
-```sh
-bun run build:desktop:windows
-```
+- launcher creation, drag, hide/restore, and visible-note spawning;
+- Markdown selection, strikethrough, Cut, and resize behavior;
+- notes-list scrolling, contextual actions, individual deletion, and Delete all;
+- saved-note persistence across a release restart and the intentional clean reset
+  in dev mode.
 
-Manual testing is the source of truth for layout-sensitive desktop behavior,
-especially launcher placement, transparent windows, drag behavior, custom popup
-focus, and native text selection.
+See [`docs/TESTING_AND_BEHAVIOR_PLAN.md`](docs/TESTING_AND_BEHAVIOR_PLAN.md) for
+the broader behavior ledger and manual test plan.
 
 ## License
 

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+  DEFAULT_NOTE_SIZE,
   DEFAULT_SETTINGS,
   MAX_NOTES,
+  clearNotesFromState,
   createInitialState,
   createNoteInState,
   isReminderDue,
@@ -104,51 +106,62 @@ describe("Simeioma model", () => {
     expect(reset.launcher).toBe(result.state.launcher);
   });
 
+  test("clears saved notes without changing launcher or settings", () => {
+    const state = {
+      ...createInitialState(3),
+      notes: [note({ id: "note-1" }), note({ id: "note-2" })],
+    };
+
+    const cleared = clearNotesFromState(state);
+
+    expect(cleared.notes).toEqual([]);
+    expect(cleared.settings).toBe(state.settings);
+    expect(cleared.launcher).toBe(state.launcher);
+  });
+
   test("legacy indexed note positions still cascade for fallback placement", () => {
     expect(nextNotePosition(0, { x: 100, y: 200 })).toEqual({ x: 100, y: 200 });
     expect(nextNotePosition(1, { x: 100, y: 200 })).toEqual({ x: 116, y: 238 });
     expect(nextNotePosition(2, { x: 100, y: 200 })).toEqual({ x: 132, y: 276 });
   });
 
-  test("stacks a new note from the latest note position when available", () => {
-    const state = createInitialState(0);
-    const first = createNoteInState(state, {
+  test("uses a supplied visible note as the stacking and size anchor", () => {
+    const first = createNoteInState(createInitialState(0), {
       id: "first",
       lineId: "first-line",
       now: "2026-05-18T12:00:00.000Z",
       origin: { x: 100, y: 200 },
     }).state;
+    const resized = updateNoteSize(first, "first", { width: 640, height: 240 });
+    const visibleAnchor = resized.notes[0];
 
-    const second = createNoteInState(first, {
+    const second = createNoteInState(resized, {
       id: "second",
       lineId: "second-line",
       now: "2026-05-18T12:01:00.000Z",
       origin: { x: 400, y: 500 },
+      spawnAfter: visibleAnchor,
     });
 
     expect(second.note?.position).toEqual({ x: 100, y: 241 });
+    expect(second.note?.size).toEqual({ width: 640, height: 240 });
   });
 
-  test("new notes inherit the latest resized note size", () => {
-    let state = createNoteInState(createInitialState(0), {
-      id: "first",
-      lineId: "first-line",
-      now: "2026-05-18T12:00:00.000Z",
-    }).state;
-    state = createNoteInState(state, {
-      id: "second",
-      lineId: "second-line",
-      now: "2026-05-18T12:01:00.000Z",
-    }).state;
-    const resized = updateNoteSize(state, "first", { width: 640, height: 240 });
+  test("ignores saved hidden notes when no visible spawn anchor is supplied", () => {
+    const state = {
+      ...createInitialState(0),
+      notes: [note({ id: "saved", position: { x: 100, y: 200 }, size: { width: 640, height: 240 } })],
+    };
 
-    const third = createNoteInState(resized, {
-      id: "third",
-      lineId: "third-line",
-      now: "2026-05-18T12:02:00.000Z",
+    const created = createNoteInState(state, {
+      id: "fresh",
+      lineId: "fresh-line",
+      now: "2026-05-18T12:01:00.000Z",
+      origin: { x: 400, y: 500 },
     });
 
-    expect(third.note?.size).toEqual({ width: 640, height: 240 });
+    expect(created.note?.position).toEqual({ x: 400, y: 500 });
+    expect(created.note?.size).toEqual({ width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE });
   });
 
   test("attention reminders include important notes and open task notes", () => {

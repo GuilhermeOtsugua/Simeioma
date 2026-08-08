@@ -62,6 +62,8 @@ When focus leaves the launcher menu, such as by clicking elsewhere on the deskto
 
 Each note has a title section, body section, color state, important/starred state, task state, optional sketch layer, position, size, creation timestamp, and updated timestamp. Notes are local-first objects and should be restorable after app restart unless explicitly deleted or cleared.
 
+Each executable launch begins with all saved notes hidden. A new note uses the launcher-origin baseline size and position whenever no note window is visible; when notes are visible, it stacks from the latest visible note and inherits that note's size. Hidden notes do not become implicit spawn anchors.
+
 The default v1 note size is small: 192px by 192px, based on a 4 by 4 regular desktop icon footprint using 48px as the icon baseline. The body is the primary surface. The title is optional. If a note has no title, the system should derive display labels from the body slug or datetime when listing notes.
 
 ## Note Interactions
@@ -114,13 +116,13 @@ The implementation should animate a line from left to right using transform-base
 
 Right clicking the launcher reveals four vertically distributed icon actions while preserving the strip identity. The launcher should expand from its central vertical axis, grow slightly wider and taller, and remain a slim command strip rather than becoming a card or panel.
 
-The actions are: list current-session notes, bulk copy/download notes, open settings, and close the app. Buttons should be icon-only, circular, outline-led, and transparent by default. They need accessible labels and tooltips, but no visible descriptive text in the strip.
+The actions are: list saved notes, bulk copy/download notes, open settings, and close the app. Buttons should be icon-only, circular, outline-led, and transparent by default. They need accessible labels and tooltips, but no visible descriptive text in the strip.
 
 The close action should use a red accent with an `x` and require confirmation. The settings action opens a separate settings screen/window rather than rendering settings inside the strip.
 
 ## Session List
 
-The session list shows all created notes in the current session. Each item should use the note color as its background color so notes remain visually identifiable.
+The session list shows all saved local notes, including notes hidden after a prior executable session. Each item should use the note color as its background color so notes remain visually identifiable.
 
 Labels should resolve in this order: note title if available, body-derived slug if text exists, and datetime if neither title nor body is available. Right clicking a list item should expose save, copy, and delete actions.
 
@@ -154,7 +156,7 @@ Clicking a reminder should surface the relevant note or a filtered list of relev
 
 ## Persistence
 
-Simeioma should persist launcher position, current strip color/cycle state, note position, note size, note color, title, body, important state, task state, sketch data, reminder schedules, and settings.
+Simeioma should persist launcher color/cycle state and corner, note position, note size, note color, title, body, important state, task state, sketch data, reminder schedules, and settings.
 
 Persistence should be local-first and crash-tolerant. Autosave should be debounced enough to avoid unnecessary writes but fast enough that users trust note changes are captured.
 

@@ -60,7 +60,6 @@ export type AppState = {
     corner: "bottom-right" | "bottom-left" | "top-right" | "top-left";
   };
   settings: Settings;
-  lastNoteSize?: { width: number; height: number };
 };
 
 export type ReminderNotice = {
@@ -123,8 +122,12 @@ export function createInitialState(colorIndex: number): AppState {
   };
 }
 
-export function resetNotesForDebug(state: AppState): AppState {
+export function clearNotesFromState(state: AppState): AppState {
   return { ...state, notes: [] };
+}
+
+export function resetNotesForDebug(state: AppState): AppState {
+  return clearNotesFromState(state);
 }
 
 export function removeNoteFromState(state: AppState, noteId: string): AppState {
@@ -154,6 +157,7 @@ export function createNoteInState(
     lineId: string;
     now: string;
     origin?: { x: number; y: number };
+    spawnAfter?: Note;
   },
 ) {
   if (state.notes.length >= MAX_NOTES) {
@@ -171,8 +175,8 @@ export function createNoteInState(
     createdAt: input.now,
     updatedAt: input.now,
     viewedAt: input.now,
-    position: input.origin ? nextNotePositionFromLatest(state.notes.at(-1), input.origin) : undefined,
-    size: state.lastNoteSize ?? state.notes.at(-1)?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE },
+    position: input.origin ? nextNotePositionFromLatest(input.spawnAfter, input.origin) : undefined,
+    size: input.spawnAfter?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE },
   };
 
   return {
@@ -228,7 +232,6 @@ export function updateNoteSize(
 ): AppState {
   return {
     ...state,
-    lastNoteSize: size,
     notes: state.notes.map((note) => (note.id === noteId ? { ...note, size } : note)),
   };
 }

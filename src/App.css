@@ -199,9 +199,10 @@ svg {
 }
 
 .note-action-popover {
-  left: 18px;
-  right: 18px;
-  bottom: 18px;
+  left: var(--note-list-gutter);
+  right: var(--note-list-gutter);
+  bottom: auto;
+  z-index: 10;
 }
 
 .keybind-popover {
@@ -355,6 +356,21 @@ svg {
   padding: 1px;
 }
 
+.note-list {
+  position: relative;
+  padding: 1px var(--note-list-gutter) 8px;
+}
+
+.note-list.is-empty {
+  display: grid;
+  align-content: stretch;
+  place-items: center;
+}
+
+.note-list.is-empty .empty-state {
+  text-align: center;
+}
+
 .note-list-item {
   width: 100%;
   display: grid;
@@ -374,6 +390,42 @@ svg {
 .note-list-item small {
   font-size: 10px;
   opacity: 0.68;
+}
+
+.note-list-delete-all {
+  min-height: 34px;
+  border: 1px solid rgba(168, 33, 33, 0.28);
+  border-radius: 12px;
+  background: transparent;
+  color: #a82121;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.note-list-delete-all:hover,
+.note-list-delete-all:focus-visible {
+  background: rgba(168, 33, 33, 0.08);
+  outline: none;
+}
+
+.note-list-delete-confirm {
+  position: absolute;
+  right: var(--note-list-gutter);
+  bottom: 56px;
+  left: var(--note-list-gutter);
+  z-index: 20;
+}
+
+.note-list-delete-confirm p {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.note-list-delete-confirm div {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .setting-row {
@@ -479,6 +531,47 @@ svg {
 
 .settings-window-shell .settings-stack {
   padding: 0 18px 18px;
+}
+
+.notes-list-window-shell {
+  --note-list-gutter: 6px;
+  position: relative;
+  grid-template-rows: 44px minmax(0, 1fr) auto;
+  gap: 0;
+}
+
+.notes-list-window-shell .note-list {
+  height: auto;
+  min-height: 0;
+  padding-bottom: 0;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.notes-list-window-shell .note-list::-webkit-scrollbar {
+  display: none;
+}
+
+.note-list-footer {
+  display: grid;
+  min-height: 56px;
+  padding: 6px var(--note-list-gutter);
+}
+
+.note-list-footer .note-list-delete-all {
+  width: 100%;
+  min-height: 44px;
+  height: 44px;
+  border-radius: 16px;
+}
+
+.note-list-delete-all:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.note-list-delete-all:disabled:hover {
+  background: transparent;
 }
 
 .utility-titlebar {
@@ -1072,14 +1165,16 @@ svg {
 }
 
 .color-popover {
+  --popover-radius: 13px;
+  --popover-inset: 7px;
   position: absolute;
   top: 31px;
   right: 8px;
   z-index: 6;
   display: grid;
   gap: 8px;
-  padding: 7px;
-  border-radius: 13px;
+  padding: var(--popover-inset);
+  border-radius: var(--popover-radius);
   background: rgba(255, 255, 255, 0.72);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
 }
@@ -1105,6 +1200,10 @@ svg {
   color: inherit;
   font-size: 11px;
   cursor: pointer;
+}
+
+.color-popover .note-menu-action {
+  border-radius: calc(var(--popover-radius) - var(--popover-inset));
 }
 
 .note-menu-action.close-action {

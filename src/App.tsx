@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { emitTo } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { documentDir } from "@tauri-apps/api/path";
 import {
   LogicalPosition,
@@ -12,15 +12,11 @@ import { WebviewWindow, getAllWebviewWindows } from "@tauri-apps/api/webviewWind
 import {
   DEFAULT_NOTE_SIZE,
   DEFAULT_SETTINGS,
-  DESKTOP_ICON,
-  MAX_NOTES,
   MENU_HEIGHT,
   MENU_WIDTH,
   NOTE_COLORS,
   NOTE_TITLE_HEIGHT,
-  STRIP_HEIGHT,
-  STRIP_HIT_WIDTH,
-  STRIP_HOVER_WIDTH,
+  clearNotesFromState,
   createInitialState as createModelInitialState,
   createNoteInState,
   isReminderDue,
@@ -35,8 +31,6 @@ import {
   type AppState,
   type ExportFormat,
   type Note,
-  type NoteColor,
-  type NoteLine,
   type ReminderNotice,
   type Settings,
   type SketchStrokeRecord,
@@ -68,7 +62,6 @@ import "./App.css";
 
 const STORAGE_KEY = "simeioma:v1";
 const CHANNEL_NAME = "simeioma-sync";
-const STRIP_VISIBLE_WIDTH = 3;
 const HOLD_TO_DRAG_MS = 0;
 const LAUNCHER_CANVAS_WIDTH = 64;
 const LAUNCHER_CANVAS_HEIGHT = 204;
@@ -86,6 +79,12 @@ let launcherUserDragging = false;
 let noteCreationQueue: Promise<void> = Promise.resolve();
 
 function App() {
+  onMount(() => {
+    const suppressNativeContextMenu = (event: MouseEvent) => event.preventDefault();
+    document.addEventListener("contextmenu", suppressNativeContextMenu);
+    onCleanup(() => document.removeEventListener("contextmenu", suppressNativeContextMenu));
+  });
+
   const params = new URLSearchParams(window.location.search);
   const role = params.get("role");
   const noteId = params.get("id");
@@ -111,9 +110,7 @@ function App() {
 
 function LauncherWindow() {
   const [state, setState] = createSignal(loadState());
-  const [hovered, setHovered] = createSignal(false);
   const [menuOpen, setMenuOpen] = createSignal(false);
-  const [notesHidden, setNotesHidden] = createSignal(false);
   const [notice, setNotice] = createSignal<ReminderNotice | null>(null);
   const [confirmingExit, setConfirmingExit] = createSignal(false);
   const [confirmSide, setConfirmSide] = createSignal<"left" | "right">("left");
@@ -129,7 +126,7 @@ function LauncherWindow() {
   let settleDragTimer: number | undefined;
 
   onMount(() => {
-    resetDebugSessionState(setState);
+    if (import.meta.env.DEV) resetDebugSessionState(setState);
     configureLauncherWindow(false);
     let movedUnlisten: (() => void) | undefined;
     let moveSaveTimer: number | undefined;
@@ -137,9 +134,6 @@ function LauncherWindow() {
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type === "state") {
         setState(loadState());
-      }
-      if (event.data?.type === "notes-hidden") {
-        setNotesHidden(true);
       }
     };
     channel?.addEventListener("message", onMessage);
@@ -152,11 +146,7 @@ function LauncherWindow() {
 
     if (isTauri()) {
       getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-        if (!focused && menuOpen()) {
-          setMenuOpen(false);
-          setHovered(true);
-          window.setTimeout(() => setHovered(false), 160);
-        }
+        if (!focused && menuOpen()) setMenuOpen(false);
       });
       getCurrentWindow().onMoved(() => {
         if (launcherIsConfiguring) return;
@@ -184,7 +174,6 @@ function LauncherWindow() {
     if (launcherUserDragging) return;
     configureLauncherWindow(
       menuOpen(),
-      false,
       confirmingExit(),
       launcherAnchor,
       (anchor) => (launcherAnchor = anchor),
@@ -199,12 +188,15 @@ function LauncherWindow() {
   });
 
   const createNote = () => enqueueNoteCreation(async () => {
+    const current = loadState();
+    const visibleNotes = await visibleNotesInState(current);
     const origin = await noteSpawnOrigin();
-    const result = createNoteInState(loadState(), {
+    const result = createNoteInState(current, {
       id: createId(),
       lineId: createId(),
       now: new Date().toISOString(),
       origin,
+      spawnAfter: visibleNotes[visibleNotes.length - 1],
     });
     if (!result.note) return;
     saveState(result.state);
@@ -241,19 +233,23 @@ function LauncherWindow() {
   };
 
   const toggleNotesVisible = async () => {
-    const shouldHide = !notesHidden();
-    for (const note of loadState().notes) {
-      const noteWindow = await WebviewWindow.getByLabel(noteLabel(note.id));
-      if (shouldHide) {
-        await noteWindow?.hide();
-      } else if (noteWindow) {
-        await noteWindow.show();
-        await noteWindow.setFocus();
-      } else {
-        await openNoteWindow(note.id);
+    const current = loadState();
+    const visibleNotes = await visibleNotesInState(current);
+    if (visibleNotes.length) {
+      for (const note of visibleNotes) {
+        await WebviewWindow.getByLabel(noteLabel(note.id)).then((noteWindow) => noteWindow?.hide());
+      }
+    } else {
+      for (const note of current.notes) {
+        const noteWindow = await WebviewWindow.getByLabel(noteLabel(note.id));
+        if (noteWindow) {
+          await noteWindow.show();
+          await noteWindow.setFocus();
+        } else {
+          await openNoteWindow(note.id);
+        }
       }
     }
-    setNotesHidden(shouldHide);
     setMenuOpen(false);
   };
 
@@ -310,8 +306,6 @@ function LauncherWindow() {
   return (
     <main
       class="launcher-shell"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
       style={{ "--strip-color": currentColor().bg, "--strip-line": currentColor().line }}
     >
       <section
@@ -511,9 +505,26 @@ function SettingsWindow() {
 
 function NotesListWindow() {
   const [state, setState] = createSignal(loadState());
+  const [confirmingDeleteAll, setConfirmingDeleteAll] = createSignal(false);
+
+  createEffect(() => {
+    if (!state().notes.length) setConfirmingDeleteAll(false);
+  });
 
   onMount(() => {
     configureUtilityWindow(320, 440);
+    let focusUnlisten: (() => void) | undefined;
+    let stateUnlisten: (() => void) | undefined;
+    if (isTauri()) {
+      getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+        if (!focused) setConfirmingDeleteAll(false);
+      }).then((unlisten) => {
+        focusUnlisten = unlisten;
+      });
+      listen("simeioma:state-changed", () => setState(loadState())).then((unlisten) => {
+        stateUnlisten = unlisten;
+      });
+    }
 
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type === "state") {
@@ -521,7 +532,11 @@ function NotesListWindow() {
       }
     };
     channel?.addEventListener("message", onMessage);
-    onCleanup(() => channel?.removeEventListener("message", onMessage));
+    onCleanup(() => {
+      channel?.removeEventListener("message", onMessage);
+      focusUnlisten?.();
+      stateUnlisten?.();
+    });
   });
 
   const deleteNote = async (id: string) => {
@@ -533,8 +548,23 @@ function NotesListWindow() {
     await noteWindow?.close();
   };
 
+  const deleteAllNotes = async () => {
+    setConfirmingDeleteAll(false);
+    await hideAllNoteWindows();
+    const next = clearNotesFromState(loadState());
+    saveState(next);
+    setState(next);
+    await closeAllNoteWindows();
+  };
+
   return (
-    <main class="settings-window-shell notes-list-window-shell">
+    <main
+      class="settings-window-shell notes-list-window-shell"
+      onPointerDown={(event) => {
+        const target = event.target as HTMLElement;
+        if (!target.closest(".note-list-delete-confirm, .note-list-delete-all")) setConfirmingDeleteAll(false);
+      }}
+    >
       <header class="utility-titlebar" onPointerDown={startUtilityDrag}>
         <strong>Simeioma Notes</strong>
         <button
@@ -551,6 +581,26 @@ function NotesListWindow() {
         </button>
       </header>
       <NoteList notes={state().notes} onOpen={openNoteWindow} onDelete={deleteNote} />
+      <footer class="note-list-footer">
+        <button
+          type="button"
+          class="note-list-delete-all"
+          disabled={!state().notes.length}
+          onClick={() => setConfirmingDeleteAll(true)}
+        >
+          Delete all notes
+        </button>
+      </footer>
+      <Show when={confirmingDeleteAll()}>
+        <div class="surface-popover note-list-delete-confirm" role="alertdialog" aria-label="Delete all saved notes">
+          <strong>Delete all saved notes?</strong>
+          <p>This permanently removes every note and drawing.</p>
+          <div>
+            <button type="button" onClick={() => setConfirmingDeleteAll(false)}>Cancel</button>
+            <button type="button" class="danger" onClick={deleteAllNotes}>Delete all</button>
+          </div>
+        </div>
+      </Show>
     </main>
   );
 }
@@ -793,11 +843,12 @@ function NoteWindow(props: { noteId: string }) {
   };
 
   const startNoteResize = async (event: PointerEvent) => {
-    if (!isTauri() || event.button !== 0) return;
+    const resizeHandle = event.currentTarget;
+    if (!isTauri() || event.button !== 0 || !(resizeHandle instanceof HTMLElement)) return;
     event.preventDefault();
     event.stopPropagation();
     resizingNote = true;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    resizeHandle.setPointerCapture(event.pointerId);
     const size = await getCurrentWindow().outerSize();
     const scale = (await primaryMonitor())?.scaleFactor || 1;
     resizeStart = {
@@ -992,7 +1043,7 @@ function NoteWindow(props: { noteId: string }) {
                   class="note-menu-action close-action"
                   onClick={() => closeCurrentWindow()}
                 >
-                  Close
+                  Hide
                 </button>
                 <button
                   type="button"
@@ -1224,10 +1275,10 @@ function NoteList(props: {
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
-  const [actionNote, setActionNote] = createSignal<Note | null>(null);
+  const [actionNote, setActionNote] = createSignal<{ note: Note; top: number } | null>(null);
 
   return (
-    <div class="note-list">
+    <div class="note-list" classList={{ "is-empty": !props.notes.length }}>
       <Show when={props.notes.length} fallback={<p class="empty-state">No notes yet.</p>}>
         <For each={props.notes}>
           {(note) => {
@@ -1239,7 +1290,12 @@ function NoteList(props: {
                 onClick={() => props.onOpen(note.id)}
                 onContextMenu={(event) => {
                   event.preventDefault();
-                  setActionNote(note);
+                  if (actionNote()?.note.id === note.id) {
+                    setActionNote(null);
+                    return;
+                  }
+                  const target = event.currentTarget as HTMLButtonElement;
+                  setActionNote({ note, top: target.offsetTop + target.offsetHeight + 4 });
                 }}
               >
                 <span>{noteLabelText(note)}</span>
@@ -1250,14 +1306,19 @@ function NoteList(props: {
         </For>
       </Show>
       <Show when={actionNote()}>
-        {(note) => (
-          <div class="surface-popover note-action-popover" role="dialog" aria-label="Note actions">
-            <strong>{noteLabelText(note())}</strong>
+        {(action) => (
+          <div
+            class="surface-popover note-action-popover"
+            style={{ top: `${action().top}px` }}
+            role="dialog"
+            aria-label="Note actions"
+          >
+            <strong>{noteLabelText(action().note)}</strong>
             <div>
               <button
                 type="button"
                 onClick={() => {
-                  copyText(noteToMarkdown(note()));
+                  copyText(noteToMarkdown(action().note));
                   setActionNote(null);
                 }}
               >
@@ -1266,7 +1327,7 @@ function NoteList(props: {
               <button
                 type="button"
                 onClick={() => {
-                  saveTextExport(loadState().settings, `${noteLabelText(note())}.md`, noteToMarkdown(note()));
+                  saveTextExport(loadState().settings, `${noteLabelText(action().note)}.md`, noteToMarkdown(action().note));
                   setActionNote(null);
                 }}
               >
@@ -1276,7 +1337,7 @@ function NoteList(props: {
                 type="button"
                 class="danger"
                 onClick={() => {
-                  props.onDelete(note().id);
+                  props.onDelete(action().note.id);
                   setActionNote(null);
                 }}
               >
@@ -1305,7 +1366,6 @@ function loadState(): AppState {
         corner: parsed.launcher?.corner ?? "bottom-right",
       },
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
-      lastNoteSize: parsed.lastNoteSize,
     };
   } catch {
     return createInitialState();
@@ -1316,6 +1376,7 @@ function saveState(state: AppState, options: { broadcast?: boolean } = {}) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (options.broadcast !== false) {
     channel?.postMessage({ type: "state" });
+    if (isTauri()) void emitTo("notes-list", "simeioma:state-changed").catch(() => undefined);
   }
 }
 
@@ -1345,18 +1406,6 @@ function updateNote(
       notes: state.notes.map((note) => (note.id === noteId ? updater(note) : note)),
     }),
     options,
-  );
-}
-
-function persistLinePatch(noteId: string, lineId: string, patch: Partial<NoteLine>) {
-  updateNote(
-    noteId,
-    (note) => ({
-      ...note,
-      updatedAt: new Date().toISOString(),
-      lines: note.lines.map((line) => (line.id === lineId ? { ...line, ...patch } : line)),
-    }),
-    { broadcast: false },
   );
 }
 
@@ -1405,7 +1454,6 @@ function resetDebugSessionState(setState?: (state: AppState) => void) {
   updateState(
     (state) => ({
       ...resetNotesForDebug(state),
-      lastNoteSize: undefined,
       settings: {
         ...state.settings,
         copyAfterSave: true,
@@ -1448,6 +1496,15 @@ function noteLabel(id: string) {
   return `note-${id}`;
 }
 
+async function visibleNotesInState(state: AppState): Promise<Note[]> {
+  const visible: Note[] = [];
+  for (const note of state.notes) {
+    const noteWindow = await WebviewWindow.getByLabel(noteLabel(note.id));
+    if (noteWindow && await noteWindow.isVisible()) visible.push(note);
+  }
+  return visible;
+}
+
 function noteLabelText(note: Note) {
   const title = note.title.trim();
   if (title) return title;
@@ -1464,22 +1521,8 @@ function slug(value: string) {
     .replace(/\s+/g, "-");
 }
 
-function parseLineInput(raw: string): Partial<NoteLine> {
-  const text = raw.replace(/\u00a0/g, " ");
-  const task = text.match(/^-\s*(?:\[( |x)\]\s*)?(.*)$/i);
-  if (task) {
-    return {
-      task: true,
-      crossed: task[1]?.toLowerCase() === "x",
-      text: task[2] ?? "",
-    };
-  }
-  return { text, task: false, crossed: false };
-}
-
 async function configureLauncherWindow(
   menuOpen: boolean,
-  hovered = false,
   confirmingExit = false,
   anchor: LauncherAnchor | null = null,
   setAnchor?: (anchor: LauncherAnchor) => void,
@@ -1487,7 +1530,6 @@ async function configureLauncherWindow(
   if (!isTauri() || launcherUserDragging) return;
   const run = ++launcherConfigureRun;
   launcherIsConfiguring = true;
-  void hovered;
   const expanded = menuOpen || confirmingExit;
   const width = confirmingExit ? LAUNCHER_CONFIRM_CANVAS_WIDTH : expanded ? LAUNCHER_CANVAS_WIDTH : LAUNCHER_IDLE_CANVAS_WIDTH;
   const height = confirmingExit ? LAUNCHER_CONFIRM_CANVAS_HEIGHT : expanded ? LAUNCHER_CANVAS_HEIGHT : LAUNCHER_IDLE_CANVAS_HEIGHT;
@@ -1496,7 +1538,6 @@ async function configureLauncherWindow(
   try {
     const monitor = await primaryMonitor();
     if (run !== launcherConfigureRun) return;
-    const scale = monitor?.scaleFactor || 1;
     await appWindow.setAlwaysOnTop(true);
     await appWindow.setSkipTaskbar(true);
     await appWindow.setResizable(false);
@@ -1523,11 +1564,6 @@ async function configureLauncherWindow(
       }, 120);
     }
   }
-}
-
-function launcherVisualSize(expanded: boolean, confirmingExit = false) {
-  void confirmingExit;
-  return expanded ? { width: MENU_WIDTH, height: MENU_HEIGHT } : { width: STRIP_HIT_WIDTH, height: STRIP_HEIGHT };
 }
 
 function launcherParkingSize() {
@@ -1758,21 +1794,14 @@ async function openNoteWindow(id: string) {
 
 async function closeAllNoteWindows() {
   if (!isTauri()) return;
-  for (const noteWindow of await getAllWebviewWindows()) {
-    if (noteWindow.label.startsWith("note-")) {
-      await noteWindow.close();
-    }
-  }
+  const noteWindows = (await getAllWebviewWindows()).filter((noteWindow) => noteWindow.label.startsWith("note-"));
+  await Promise.all(noteWindows.map((noteWindow) => noteWindow.close()));
 }
 
 async function hideAllNoteWindows() {
   if (!isTauri()) return;
-  for (const noteWindow of await getAllWebviewWindows()) {
-    if (noteWindow.label.startsWith("note-")) {
-      await noteWindow.hide();
-    }
-  }
-  channel?.postMessage({ type: "notes-hidden" });
+  const noteWindows = (await getAllWebviewWindows()).filter((noteWindow) => noteWindow.label.startsWith("note-"));
+  await Promise.all(noteWindows.map((noteWindow) => noteWindow.hide()));
 }
 
 async function closeAuxiliaryWindows() {

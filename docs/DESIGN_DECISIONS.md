@@ -44,7 +44,7 @@ The visible strip is 3px wide and roughly two regular desktop icons tall, using 
 
 ## Launcher Color Cycle
 
-The launcher strip starts with a random color from a curated note color palette. The v1 palette uses classic sticky-note color families anchored by Post-it-style yellows: canary, classic yellow, pink, papaya, mint, aqua, sky, and lilac. Each color must have sufficient text contrast and a physical post-it feel.
+The launcher strip starts with a random color from a curated note color palette. The v1 palette uses soft sticky-note color families: canary, pink, papaya, mint, aqua, sky, and lilac. Each color must have sufficient text contrast and a physical post-it feel. The earlier saturated classic yellow is retired and existing notes using it migrate to canary.
 
 Every left click creates a new note using the strip's current color, then advances the strip to the next palette color. Each click creates exactly one note for the color visible before the cycle advances.
 

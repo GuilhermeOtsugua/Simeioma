@@ -21,6 +21,198 @@ fn save_binary_file(directory: String, filename: String, bytes: Vec<u8>) -> Resu
 }
 
 #[tauri::command]
+fn visible_note_window_labels(app: tauri::AppHandle) -> Vec<String> {
+    app.webview_windows()
+        .into_iter()
+        .filter_map(|(label, window)| {
+            (label.starts_with("note-") && window.is_visible().unwrap_or(false)).then_some(label)
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn set_note_windows_visibility(
+    app: tauri::AppHandle,
+    labels: Vec<String>,
+    visible: bool,
+) -> Result<(), String> {
+    for label in &labels {
+        if !label.starts_with("note-") {
+            continue;
+        }
+        if let Some(window) = app.get_webview_window(label) {
+            if visible {
+                window.show().map_err(|error| error.to_string())?;
+            } else {
+                window.hide().map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    if visible {
+        order_note_windows(&app, &labels)?;
+        raise_control_window(&app, "main");
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn restore_utility_window(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    if !matches!(label.as_str(), "settings" | "notes-list") {
+        return Ok(());
+    }
+    let Some(window) = app.get_webview_window(&label) else {
+        return Ok(());
+    };
+    restore_and_focus_utility(&window)
+}
+
+#[tauri::command]
+fn set_utility_focus_state(
+    app: tauri::AppHandle,
+    label: String,
+    focused: bool,
+) -> Result<(), String> {
+    if !matches!(label.as_str(), "settings" | "notes-list") {
+        return Ok(());
+    }
+    let Some(window) = app.get_webview_window(&label) else {
+        return Ok(());
+    };
+    set_utility_window_level(&window, focused)
+}
+
+#[tauri::command]
+fn raise_control(app: tauri::AppHandle, label: String) {
+    if matches!(label.as_str(), "main" | "settings" | "notes-list") {
+        raise_control_window(&app, &label);
+    }
+}
+
+fn raise_control_window(app: &tauri::AppHandle, label: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = raise_window_without_focus(&window);
+    }
+}
+
+#[cfg(windows)]
+fn order_note_windows(app: &tauri::AppHandle, labels: &[String]) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::HWND_TOPMOST;
+
+    for label in labels {
+        if let Some(window) = app.get_webview_window(label) {
+            set_window_position(&window, HWND_TOPMOST, true)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn order_note_windows(_app: &tauri::AppHandle, _labels: &[String]) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn restore_and_focus_utility<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetForegroundWindow, ShowWindow, HWND_TOPMOST, SW_RESTORE,
+    };
+
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?.0;
+    unsafe {
+        ShowWindow(hwnd, SW_RESTORE);
+    }
+    set_window_position(window, HWND_TOPMOST, true)?;
+    unsafe {
+        SetForegroundWindow(hwnd);
+    }
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+#[cfg(not(windows))]
+fn restore_and_focus_utility<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    window.unminimize().map_err(|error| error.to_string())?;
+    window.show().map_err(|error| error.to_string())?;
+    window.set_focus().map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn set_utility_window_level<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    focused: bool,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowLongPtrW, GWL_EXSTYLE, HWND_NOTOPMOST, HWND_TOPMOST,
+        WS_EX_TOPMOST,
+    };
+
+    if focused {
+        return set_window_position(window, HWND_TOPMOST, false);
+    }
+
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?.0;
+    let foreground = unsafe { GetForegroundWindow() };
+    let foreground_is_topmost = !foreground.is_null()
+        && unsafe { GetWindowLongPtrW(foreground, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST != 0;
+    let insert_after = if foreground.is_null() || foreground == hwnd || foreground_is_topmost {
+        HWND_NOTOPMOST
+    } else {
+        foreground
+    };
+    set_window_position(window, insert_after, false)
+}
+
+#[cfg(not(windows))]
+fn set_utility_window_level<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    focused: bool,
+) -> Result<(), String> {
+    window
+        .set_always_on_top(focused)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn raise_window_without_focus<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::HWND_TOPMOST;
+
+    set_window_position(window, HWND_TOPMOST, false)
+}
+
+#[cfg(not(windows))]
+fn raise_window_without_focus<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    window
+        .set_always_on_top(true)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn set_window_position<R: tauri::Runtime>(
+    window: &tauri::WebviewWindow<R>,
+    insert_after: windows_sys::Win32::Foundation::HWND,
+    show: bool,
+) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+    };
+
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+    let flags = SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | if show { SWP_SHOWWINDOW } else { 0 };
+    let result = unsafe { SetWindowPos(hwnd.0, insert_after, 0, 0, 0, 0, flags) };
+    if result == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn is_left_mouse_down() -> bool {
     left_mouse_down()
 }
@@ -39,7 +231,9 @@ fn write_clipboard_text(text: String) -> Result<(), String> {
 
 #[cfg(windows)]
 fn read_clipboard_text_native() -> Result<String, String> {
-    use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, OpenClipboard,
+    };
     use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
     use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
 
@@ -122,7 +316,18 @@ pub fn run() {
             setup_tray(app)?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![save_text_file, save_binary_file, is_left_mouse_down, read_clipboard_text, write_clipboard_text])
+        .invoke_handler(tauri::generate_handler![
+            save_text_file,
+            save_binary_file,
+            visible_note_window_labels,
+            set_note_windows_visibility,
+            restore_utility_window,
+            set_utility_focus_state,
+            raise_control,
+            is_left_mouse_down,
+            read_clipboard_text,
+            write_clipboard_text,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -160,8 +365,7 @@ fn show_launcher(app: &tauri::AppHandle) {
 
 fn show_settings(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("settings") {
-        let _ = window.show();
-        let _ = window.set_focus();
+        let _ = restore_and_focus_utility(&window);
         return;
     }
 
@@ -171,11 +375,11 @@ fn show_settings(app: &tauri::AppHandle) {
         WebviewUrl::App("index.html?role=settings".into()),
     )
     .title("Simeioma Settings")
-    .inner_size(380.0, 520.0)
-    .min_inner_size(340.0, 440.0)
+    .inner_size(320.0, 440.0)
+    .min_inner_size(280.0, 300.0)
     .decorations(false)
     .transparent(true)
-    .always_on_top(true)
+    .always_on_top(false)
     .skip_taskbar(false)
     .resizable(true)
     .build();

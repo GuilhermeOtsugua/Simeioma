@@ -41,7 +41,6 @@ export type Settings = {
   exportFormat: ExportFormat;
   strikeKeybind: string;
   scribbleKeybind: string;
-  copyNoteKeybind: string;
   newNoteKeybind: string;
   hideNotesKeybind: string;
   sketchRenderingMode: SketchRenderingMode;
@@ -86,9 +85,12 @@ export const DEFAULT_NOTE_SIZE = DESKTOP_ICON * 4;
 export const NOTE_TITLE_HEIGHT = 38;
 export const MAX_NOTES = 10;
 
+export function launcherPrimaryAction(noteCount: number) {
+  return noteCount >= MAX_NOTES ? "toggle-visibility" : "create";
+}
+
 export const NOTE_COLORS: NoteColor[] = [
-  { key: "canary", name: "Canary", bg: "#FFEBA1", ink: "#33270B", line: "#E0C967" },
-  { key: "classic", name: "Classic", bg: "#FFD100", ink: "#2A2100", line: "#D9B000" },
+  { key: "canary", name: "Canary", bg: "#FFF2C2", ink: "#3A3015", line: "#E5D59A" },
   { key: "pink", name: "Pink", bg: "#FFD3E2", ink: "#391827", line: "#E8A9C0" },
   { key: "papaya", name: "Papaya", bg: "#FFC8A2", ink: "#3A1F10", line: "#E7A77B" },
   { key: "mint", name: "Mint", bg: "#D7F0C8", ink: "#183014", line: "#B5D9A6" },
@@ -97,13 +99,16 @@ export const NOTE_COLORS: NoteColor[] = [
   { key: "lilac", name: "Lilac", bg: "#DDD1FF", ink: "#291D45", line: "#BFAFE9" },
 ];
 
+export function normalizeNoteColorKey(colorKey: string) {
+  return colorKey === "classic" ? "canary" : colorKey;
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   exportPath: "",
   copyAfterSave: true,
   exportFormat: "markdown",
   strikeKeybind: "Ctrl + left click",
   scribbleKeybind: "Ctrl + right click",
-  copyNoteKeybind: "Ctrl + Shift + C",
   newNoteKeybind: "Ctrl + N",
   hideNotesKeybind: "Ctrl + Shift + H",
   sketchRenderingMode: "simeioma-adaptive",
@@ -208,9 +213,11 @@ export function unviewedReminderNotes(notes: Note[], target: ReminderTarget) {
 }
 
 export function markNoteViewed(state: AppState, noteId: string, viewedAt: string): AppState {
+  const note = state.notes.find((item) => item.id === noteId);
+  if (!note || (note.viewedAt && note.viewedAt >= note.updatedAt)) return state;
   return {
     ...state,
-    notes: state.notes.map((note) => (note.id === noteId ? { ...note, viewedAt } : note)),
+    notes: state.notes.map((item) => (item.id === noteId ? { ...item, viewedAt } : item)),
   };
 }
 
@@ -268,6 +275,29 @@ export function periodicLabel(value: string) {
   if (hours) parts.push(`${hours}h`);
   if (minutes) parts.push(`${minutes}min`);
   return `Every ${parts.join(" ") || "15min"}`;
+}
+
+export function reminderValueForMode(
+  currentMode: ReminderMode,
+  currentValue: string,
+  targetMode: ReminderMode,
+) {
+  if (currentMode === targetMode) return currentValue;
+  return targetMode === "periodic" ? "1" : "00:00";
+}
+
+export function timingDraftAfterInput(currentValue: string, input: string, replace: boolean) {
+  const currentDigits = currentValue.replace(/\D/g, "").slice(0, 4);
+  if (input === "Backspace") return formatTimingDraft(currentDigits.slice(0, -1));
+  if (!/^\d+$/.test(input)) return formatTimingDraft(currentDigits);
+  const nextDigits = `${replace ? "" : currentDigits}${input}`.slice(0, 4);
+  return formatTimingDraft(nextDigits);
+}
+
+export function formatTimingDraft(value: string) {
+  const digits = value.replace(/\D/g, "").slice(0, 4);
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}:${digits.slice(2)}`;
 }
 
 export function normalizeTimeOfDay(value: string) {

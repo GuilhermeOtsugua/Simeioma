@@ -20,7 +20,9 @@ import {
   createInitialState as createModelInitialState,
   createNoteInState,
   isReminderDue,
+  launcherPrimaryAction,
   markNoteViewed,
+  normalizeNoteColorKey,
   reminderNotes,
   removeNoteFromState,
   resetNotesForDebug,
@@ -70,6 +72,10 @@ const LAUNCHER_CONFIRM_CANVAS_HEIGHT = 204;
 const LAUNCHER_IDLE_CANVAS_WIDTH = 30;
 const LAUNCHER_IDLE_CANVAS_HEIGHT = 112;
 const LAUNCHER_SCREEN_MARGIN = 12;
+const UTILITY_WINDOW_WIDTH = 320;
+const UTILITY_WINDOW_HEIGHT = 440;
+const UTILITY_WINDOW_MIN_WIDTH = 280;
+const UTILITY_WINDOW_MIN_HEIGHT = 300;
 
 const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(CHANNEL_NAME) : null;
 let launcherWasPlaced = false;
@@ -90,7 +96,7 @@ function App() {
   const noteId = params.get("id");
 
   if (role === "note" && noteId) {
-    return <NoteWindow noteId={noteId} />;
+    return <NoteWindow noteId={noteId} autoFocus={params.get("autofocus") !== "0"} />;
   }
 
   if (role === "settings") {
@@ -124,6 +130,10 @@ function LauncherWindow() {
   let launcherAnchor: LauncherAnchor | null = null;
   let confirmButtonRef: HTMLButtonElement | undefined;
   let settleDragTimer: number | undefined;
+  let togglingNoteVisibility = false;
+  let launcherCreationAnchorId: string | undefined;
+  let launcherCreationPending = 0;
+  let launcherCreationClearTimer: number | undefined;
 
   onMount(() => {
     if (import.meta.env.DEV) resetDebugSessionState(setState);
@@ -166,6 +176,7 @@ function LauncherWindow() {
       window.clearTimeout(dragTimer);
       window.clearTimeout(moveSaveTimer);
       window.clearTimeout(settleDragTimer);
+      window.clearTimeout(launcherCreationClearTimer);
       movedUnlisten?.();
     });
   });
@@ -187,23 +198,37 @@ function LauncherWindow() {
     }
   });
 
-  const createNote = () => enqueueNoteCreation(async () => {
-    const current = loadState();
-    const visibleNotes = await visibleNotesInState(current);
-    const origin = await noteSpawnOrigin();
-    const result = createNoteInState(current, {
-      id: createId(),
-      lineId: createId(),
-      now: new Date().toISOString(),
-      origin,
-      spawnAfter: visibleNotes[visibleNotes.length - 1],
+  const createNote = () => {
+    window.clearTimeout(launcherCreationClearTimer);
+    launcherCreationPending += 1;
+    return enqueueNoteCreation(async () => {
+      try {
+        const current = loadState();
+        const burstAnchor = current.notes.find((note) => note.id === launcherCreationAnchorId);
+        const visibleNotes = burstAnchor ? [] : await visibleNotesInState(current);
+        const origin = await noteSpawnOrigin();
+        const result = createNoteInState(current, {
+          id: createId(),
+          lineId: createId(),
+          now: new Date().toISOString(),
+          origin,
+          spawnAfter: burstAnchor ?? visibleNotes[visibleNotes.length - 1],
+        });
+        if (!result.note) return;
+        launcherCreationAnchorId = result.note.id;
+        saveState(result.state);
+        setState(result.state);
+        await openNoteWindow(result.note.id);
+      } finally {
+        launcherCreationPending -= 1;
+        if (launcherCreationPending === 0) {
+          launcherCreationClearTimer = window.setTimeout(() => {
+            launcherCreationAnchorId = undefined;
+          }, 180);
+        }
+      }
     });
-    if (!result.note) return;
-    saveState(result.state);
-    setState(result.state);
-
-    await openNoteWindow(result.note.id);
-  });
+  };
 
   const exportAll = async (format = state().settings.exportFormat) => {
     const latest = loadState();
@@ -233,24 +258,31 @@ function LauncherWindow() {
   };
 
   const toggleNotesVisible = async () => {
-    const current = loadState();
-    const visibleNotes = await visibleNotesInState(current);
-    if (visibleNotes.length) {
-      for (const note of visibleNotes) {
-        await WebviewWindow.getByLabel(noteLabel(note.id)).then((noteWindow) => noteWindow?.hide());
+    if (togglingNoteVisibility) return;
+    togglingNoteVisibility = true;
+    try {
+      const current = loadState();
+      const windowStates = await noteWindowStatesInState(current);
+      const visibleWindows = windowStates.filter(({ visible }) => visible);
+      if (visibleWindows.length) {
+        await invoke("set_note_windows_visibility", {
+          labels: visibleWindows.map(({ note }) => noteLabel(note.id)),
+          visible: false,
+        });
+      } else {
+        const missingNoteIds = windowStates
+          .filter(({ noteWindow }) => !noteWindow)
+          .map(({ note }) => note.id);
+        await prepareNoteWindowsForReveal(missingNoteIds);
+        await invoke("set_note_windows_visibility", {
+          labels: current.notes.map((note) => noteLabel(note.id)),
+          visible: true,
+        });
       }
-    } else {
-      for (const note of current.notes) {
-        const noteWindow = await WebviewWindow.getByLabel(noteLabel(note.id));
-        if (noteWindow) {
-          await noteWindow.show();
-          await noteWindow.setFocus();
-        } else {
-          await openNoteWindow(note.id);
-        }
-      }
+    } finally {
+      togglingNoteVisibility = false;
+      setMenuOpen(false);
     }
-    setMenuOpen(false);
   };
 
   const startLauncherDrag = () => {
@@ -294,7 +326,11 @@ function LauncherWindow() {
   const createNoteFromLauncher = () => {
     if (dragStarted || menuOpen()) return;
     clickHandledAt = performance.now();
-    createNote();
+    if (launcherPrimaryAction(loadState().notes.length) === "toggle-visibility") {
+      void toggleNotesVisible();
+      return;
+    }
+    void createNote();
   };
 
   const closeSimeioma = async () => {
@@ -377,7 +413,7 @@ function LauncherWindow() {
             return;
           }
           if (performance.now() - clickHandledAt > 250 && !dragStarted && !menuOpen()) {
-            createNote();
+            createNoteFromLauncher();
           }
         }}
       >
@@ -460,18 +496,35 @@ function LauncherWindow() {
 
 function SettingsWindow() {
   const [state, setState] = createSignal(loadState());
+  const syncTopmostWithFocus = createUtilityTopmostController();
 
   onMount(() => {
-    configureUtilityWindow(380, 520);
+    configureUtilityWindow(UTILITY_WINDOW_WIDTH, UTILITY_WINDOW_HEIGHT);
     ensureDefaultExportPath(setState);
 
+    let focusUnlisten: (() => void) | undefined;
+    let focusEventSeen = false;
+    if (isTauri()) {
+      void getCurrentWindow().isFocused().then((focused) => {
+        if (!focusEventSeen) void syncTopmostWithFocus(focused);
+      });
+      getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+        focusEventSeen = true;
+        void syncTopmostWithFocus(focused);
+      }).then((unlisten) => {
+        focusUnlisten = unlisten;
+      });
+    }
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type === "state") {
         setState(loadState());
       }
     };
     channel?.addEventListener("message", onMessage);
-    onCleanup(() => channel?.removeEventListener("message", onMessage));
+    onCleanup(() => {
+      channel?.removeEventListener("message", onMessage);
+      focusUnlisten?.();
+    });
   });
 
   const updateSettings = (patch: Partial<Settings>) => {
@@ -482,7 +535,7 @@ function SettingsWindow() {
   };
 
   return (
-    <main class="settings-window-shell">
+    <main class="settings-window-shell" onCopy={preventUtilityClipboard} onCut={preventUtilityClipboard}>
       <header class="utility-titlebar" onPointerDown={startUtilityDrag}>
         <strong>Simeioma Settings</strong>
         <button
@@ -506,17 +559,24 @@ function SettingsWindow() {
 function NotesListWindow() {
   const [state, setState] = createSignal(loadState());
   const [confirmingDeleteAll, setConfirmingDeleteAll] = createSignal(false);
+  const syncTopmostWithFocus = createUtilityTopmostController();
 
   createEffect(() => {
     if (!state().notes.length) setConfirmingDeleteAll(false);
   });
 
   onMount(() => {
-    configureUtilityWindow(320, 440);
+    configureUtilityWindow(UTILITY_WINDOW_WIDTH, UTILITY_WINDOW_HEIGHT);
     let focusUnlisten: (() => void) | undefined;
     let stateUnlisten: (() => void) | undefined;
+    let focusEventSeen = false;
     if (isTauri()) {
+      void getCurrentWindow().isFocused().then((focused) => {
+        if (!focusEventSeen) void syncTopmostWithFocus(focused);
+      });
       getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+        focusEventSeen = true;
+        void syncTopmostWithFocus(focused);
         if (!focused) setConfirmingDeleteAll(false);
       }).then((unlisten) => {
         focusUnlisten = unlisten;
@@ -560,6 +620,8 @@ function NotesListWindow() {
   return (
     <main
       class="settings-window-shell notes-list-window-shell"
+      onCopy={preventUtilityClipboard}
+      onCut={preventUtilityClipboard}
       onPointerDown={(event) => {
         const target = event.target as HTMLElement;
         if (!target.closest(".note-list-delete-confirm, .note-list-delete-all")) setConfirmingDeleteAll(false);
@@ -605,10 +667,11 @@ function NotesListWindow() {
   );
 }
 
-function NoteWindow(props: { noteId: string }) {
+function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
   const [state, setState] = createSignal(loadState());
   const [paletteOpen, setPaletteOpen] = createSignal(false);
   const [scribble, setScribble] = createSignal(false);
+  const [windowFocused, setWindowFocused] = createSignal(false);
   let canvasRef: HTMLCanvasElement | undefined;
   let bodyEditor: MarkdownEditorHandle | undefined;
   let rightEditor: MarkdownEditorHandle | undefined;
@@ -650,14 +713,6 @@ function NoteWindow(props: { noteId: string }) {
     const currentSettings = loadState().settings;
     const current = note();
 
-    if (combo === currentSettings.copyNoteKeybind && current) {
-      const bodySelection = bodyEditor?.selection();
-      if (bodySelection && bodySelection.start !== bodySelection.end) return;
-      event.preventDefault();
-      void copyText(noteToMarkdown(current));
-      return;
-    }
-
     if (combo === currentSettings.newNoteKeybind) {
       event.preventDefault();
       void createNoteFromShortcut();
@@ -683,9 +738,28 @@ function NoteWindow(props: { noteId: string }) {
   };
 
   onMount(() => {
-    configureNoteWindow(props.noteId);
-    markCurrentNoteViewed(props.noteId, setState);
-    focusFirstLine();
+    const initializeNoteWindow = async () => {
+      let hydrated = false;
+      for (let attempt = 0; attempt <= 12; attempt += 1) {
+        const latest = loadState();
+        setState(latest);
+        if (latest.notes.some((item) => item.id === props.noteId)) {
+          hydrated = true;
+          break;
+        }
+        await sleep(25);
+      }
+      if (!hydrated) {
+        await closeCurrentWindow();
+        return;
+      }
+      await configureNoteWindow(props.noteId);
+      markCurrentNoteViewed(props.noteId, setState);
+      window.setTimeout(hydrateCanvas, 0);
+      await emitTo("main", "simeioma:note-window-ready", { noteId: props.noteId });
+    };
+    void initializeNoteWindow();
+    if (props.autoFocus) focusFirstLine();
     hydrateCanvas();
     const canvasForResize = canvasRef;
     const canvasResizeObserver = typeof ResizeObserver === "undefined" || !canvasForResize
@@ -700,8 +774,13 @@ function NoteWindow(props: { noteId: string }) {
     let sizeSaveTimer: number | undefined;
 
     if (isTauri()) {
+      void getCurrentWindow().isFocused().then(setWindowFocused);
       getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-        if (focused) channel?.postMessage({ type: "note-focused", noteId: props.noteId });
+        setWindowFocused(focused);
+        if (focused) {
+          channel?.postMessage({ type: "note-focused", noteId: props.noteId });
+          void invoke("raise_control", { label: "main" });
+        }
         if (!focused) {
           setPaletteOpen(false);
           channel?.postMessage({ type: "dismiss-text-menu" });
@@ -953,11 +1032,14 @@ function NoteWindow(props: { noteId: string }) {
   };
 
   return (
-    <Show when={note()} fallback={<main class="note-shell deleted-note">Note deleted</main>}>
+    <Show when={note()} fallback={<main class="note-window-pending" aria-hidden="true" />}>
       {(item) => (
         <main
           class="note-shell"
-          classList={{ "is-scribbling": scribble() }}
+          classList={{
+            "is-scribbling": scribble(),
+            "is-window-focused": windowFocused(),
+          }}
           style={{
             "--note-bg": noteColor().bg,
             "--note-ink": noteColor().ink,
@@ -1360,7 +1442,10 @@ function loadState(): AppState {
   try {
     const parsed = JSON.parse(raw) as Partial<AppState>;
     return {
-      notes: parsed.notes ?? [],
+      notes: (parsed.notes ?? []).map((note) => ({
+        ...note,
+        colorKey: normalizeNoteColorKey(note.colorKey),
+      })),
       launcher: {
         colorIndex: parsed.launcher?.colorIndex ?? randomColorIndex(),
         corner: parsed.launcher?.corner ?? "bottom-right",
@@ -1389,8 +1474,9 @@ function updateState(
   updater: (state: AppState) => AppState,
   options: { broadcast?: boolean; setState?: (state: AppState) => void } = {},
 ) {
-  const next = updater(loadState());
-  saveState(next, { broadcast: options.broadcast });
+  const current = loadState();
+  const next = updater(current);
+  if (next !== current) saveState(next, { broadcast: options.broadcast });
   options.setState?.(next);
   return next;
 }
@@ -1496,13 +1582,42 @@ function noteLabel(id: string) {
   return `note-${id}`;
 }
 
-async function visibleNotesInState(state: AppState): Promise<Note[]> {
-  const visible: Note[] = [];
-  for (const note of state.notes) {
-    const noteWindow = await WebviewWindow.getByLabel(noteLabel(note.id));
-    if (noteWindow && await noteWindow.isVisible()) visible.push(note);
+async function prepareNoteWindowsForReveal(noteIds: string[]) {
+  if (!noteIds.length) return;
+  const pending = new Set(noteIds);
+  let resolveReady: (() => void) | undefined;
+  const ready = new Promise<void>((resolve) => {
+    resolveReady = resolve;
+  });
+  const unlisten = await listen<{ noteId: string }>("simeioma:note-window-ready", ({ payload }) => {
+    pending.delete(payload.noteId);
+    if (!pending.size) resolveReady?.();
+  });
+  try {
+    await Promise.all(noteIds.map((id) => openNoteWindow(id, { visible: false, focus: false })));
+    if (pending.size) await Promise.race([ready, sleep(1500)]);
+  } finally {
+    unlisten();
   }
-  return visible;
+}
+
+async function noteWindowStatesInState(state: AppState) {
+  const [allWindows, visibleLabels] = await Promise.all([
+    getAllWebviewWindows(),
+    invoke<string[]>("visible_note_window_labels"),
+  ]);
+  const noteWindows = allWindows.filter((noteWindow) => noteWindow.label.startsWith("note-"));
+  const windowsByLabel = new Map(noteWindows.map((noteWindow) => [noteWindow.label, noteWindow]));
+  const visible = new Set(visibleLabels);
+  return state.notes.map((note) => {
+    const label = noteLabel(note.id);
+    return { note, noteWindow: windowsByLabel.get(label), visible: visible.has(label) };
+  });
+}
+
+async function visibleNotesInState(state: AppState): Promise<Note[]> {
+  const windowStates = await noteWindowStatesInState(state);
+  return windowStates.filter(({ visible }) => visible).map(({ note }) => note);
 }
 
 function noteLabelText(note: Note) {
@@ -1602,7 +1717,6 @@ async function configureNoteWindow(noteId: string) {
   const appWindow = getCurrentWindow();
   const note = loadState().notes.find((item) => item.id === noteId);
   const size = note?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE };
-  await appWindow.setAlwaysOnTop(true);
   await appWindow.setSkipTaskbar(true);
   await appWindow.setSize(new LogicalSize(size.width, size.height));
 }
@@ -1610,7 +1724,6 @@ async function configureNoteWindow(noteId: string) {
 async function configureUtilityWindow(width: number, height: number) {
   if (!isTauri()) return;
   const appWindow = getCurrentWindow();
-  await appWindow.setAlwaysOnTop(true);
   await appWindow.setSkipTaskbar(false);
   await appWindow.setResizable(true);
   await appWindow.setSize(new LogicalSize(width, height));
@@ -1756,11 +1869,17 @@ async function popupAtCurrentWindowPoint(clientX: number, clientY: number, width
   };
 }
 
-async function openNoteWindow(id: string) {
+async function openNoteWindow(
+  id: string,
+  options: { visible?: boolean; focus?: boolean } = {},
+) {
   if (!isTauri()) return;
+  const visible = options.visible ?? true;
+  const focus = options.focus ?? visible;
   const existing = await WebviewWindow.getByLabel(noteLabel(id));
   if (existing) {
-    await existing.setFocus();
+    if (visible) await existing.show();
+    if (focus) await existing.setFocus();
     return;
   }
 
@@ -1772,7 +1891,7 @@ async function openNoteWindow(id: string) {
   const size = note?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE };
 
   const webview = new WebviewWindow(noteLabel(id), {
-    url: `index.html?role=note&id=${encodeURIComponent(id)}`,
+    url: `index.html?role=note&id=${encodeURIComponent(id)}&autofocus=${focus ? "1" : "0"}`,
     title: "Simeioma Note",
     x: Math.max(16, x),
     y: Math.max(16, y),
@@ -1786,10 +1905,12 @@ async function openNoteWindow(id: string) {
     skipTaskbar: true,
     resizable: true,
     shadow: false,
-    visible: true,
+    visible,
+    focus,
   });
 
   await webview.once("tauri://created", () => undefined);
+  if (focus) void invoke("raise_control", { label: "main" });
 }
 
 async function closeAllNoteWindows() {
@@ -1812,6 +1933,15 @@ async function closeAuxiliaryWindows() {
   }
 }
 
+function createUtilityTopmostController() {
+  const label = getCurrentWindow().label;
+  return (focused: boolean) => invoke("set_utility_focus_state", { label, focused });
+}
+
+function preventUtilityClipboard(event: ClipboardEvent) {
+  event.preventDefault();
+}
+
 function startUtilityDrag(event: PointerEvent) {
   if (!isTauri()) return;
   const target = event.target as HTMLElement;
@@ -1819,20 +1949,23 @@ function startUtilityDrag(event: PointerEvent) {
   getCurrentWindow().startDragging();
 }
 
+async function restoreAndFocusUtilityWindow(window: WebviewWindow) {
+  await invoke("restore_utility_window", { label: window.label });
+}
+
 async function openSettingsWindow() {
   if (!isTauri()) return;
   const existing = await WebviewWindow.getByLabel("settings");
   if (existing) {
-    await existing.show();
-    await existing.setFocus();
+    await restoreAndFocusUtilityWindow(existing);
     return;
   }
 
   const monitor = await primaryMonitor();
   const scale = monitor?.scaleFactor || 1;
   const work = monitor?.workArea;
-  const width = 380;
-  const height = 520;
+  const width = UTILITY_WINDOW_WIDTH;
+  const height = UTILITY_WINDOW_HEIGHT;
   const x = work ? (work.position.x + work.size.width) / scale - width - 88 : 180;
   const y = work ? (work.position.y + work.size.height) / scale - height - 88 : 140;
 
@@ -1843,11 +1976,11 @@ async function openSettingsWindow() {
     y: Math.max(16, y),
     width,
     height,
-    minWidth: 340,
-    minHeight: 440,
+    minWidth: UTILITY_WINDOW_MIN_WIDTH,
+    minHeight: UTILITY_WINDOW_MIN_HEIGHT,
     decorations: false,
     transparent: true,
-    alwaysOnTop: true,
+    alwaysOnTop: false,
     skipTaskbar: false,
     resizable: true,
     shadow: false,
@@ -1861,16 +1994,15 @@ async function openNotesListWindow() {
   if (!isTauri()) return;
   const existing = await WebviewWindow.getByLabel("notes-list");
   if (existing) {
-    await existing.show();
-    await existing.setFocus();
+    await restoreAndFocusUtilityWindow(existing);
     return;
   }
 
   const monitor = await primaryMonitor();
   const scale = monitor?.scaleFactor || 1;
   const work = monitor?.workArea;
-  const width = 320;
-  const height = 440;
+  const width = UTILITY_WINDOW_WIDTH;
+  const height = UTILITY_WINDOW_HEIGHT;
   const x = work ? (work.position.x + work.size.width) / scale - width - 88 : 180;
   const y = work ? (work.position.y + work.size.height) / scale - height - 88 : 140;
 
@@ -1881,11 +2013,11 @@ async function openNotesListWindow() {
     y: Math.max(16, y),
     width,
     height,
-    minWidth: 280,
-    minHeight: 300,
+    minWidth: UTILITY_WINDOW_MIN_WIDTH,
+    minHeight: UTILITY_WINDOW_MIN_HEIGHT,
     decorations: false,
     transparent: true,
-    alwaysOnTop: true,
+    alwaysOnTop: false,
     skipTaskbar: false,
     resizable: true,
     shadow: false,

@@ -3,14 +3,20 @@ import {
   DEFAULT_NOTE_SIZE,
   DEFAULT_SETTINGS,
   MAX_NOTES,
+  NOTE_COLORS,
   clearNotesFromState,
   createInitialState,
   createNoteInState,
+  formatTimingDraft,
   isReminderDue,
+  launcherPrimaryAction,
   markNoteViewed,
+  normalizeNoteColorKey,
   normalizePeriodicHours,
   nextNotePosition,
   periodicLabel,
+  reminderValueForMode,
+  timingDraftAfterInput,
   updateNotePosition,
   updateNoteSize,
   reminderNotes,
@@ -29,8 +35,8 @@ describe("Simeioma model", () => {
     expect(DEFAULT_SETTINGS.reminderTarget).toBe("attention");
   });
 
-  test("defaults note-level keybindings", () => {
-    expect(DEFAULT_SETTINGS.copyNoteKeybind).toBe("Ctrl + Shift + C");
+  test("defaults only the note-level keybindings that need dedicated actions", () => {
+    expect("copyNoteKeybind" in DEFAULT_SETTINGS).toBe(false);
     expect(DEFAULT_SETTINGS.newNoteKeybind).toBe("Ctrl + N");
     expect(DEFAULT_SETTINGS.hideNotesKeybind).toBe("Ctrl + Shift + H");
   });
@@ -43,6 +49,42 @@ describe("Simeioma model", () => {
     expect(DEFAULT_SETTINGS.sketchBrushSize).toBe("default");
   });
 
+  test("formats replacement timing digits while the user types", () => {
+    expect(formatTimingDraft("0")).toBe("0");
+    expect(formatTimingDraft("09")).toBe("09");
+    expect(formatTimingDraft("090")).toBe("09:0");
+    expect(formatTimingDraft("0900")).toBe("09:00");
+  });
+
+  test("retires classic yellow notes to the softer canary color", () => {
+    expect(normalizeNoteColorKey("classic")).toBe("canary");
+    expect(normalizeNoteColorKey("pink")).toBe("pink");
+    expect(NOTE_COLORS.some((color) => color.key === "classic")).toBe(false);
+    expect(NOTE_COLORS.find((color) => color.key === "canary")).toMatchObject({
+      bg: "#FFF2C2",
+      ink: "#3A3015",
+      line: "#E5D59A",
+    });
+  });
+
+  test("replaces and constrains timing drafts to four numeric digits", () => {
+    expect(timingDraftAfterInput("01:00", "9", true)).toBe("9");
+    expect(timingDraftAfterInput("9", "0", false)).toBe("90");
+    expect(timingDraftAfterInput("90", "0", false)).toBe("90:0");
+    expect(timingDraftAfterInput("90:0", "0", false)).toBe("90:00");
+    expect(timingDraftAfterInput("90:00", "1", false)).toBe("90:00");
+    expect(timingDraftAfterInput("09:00", "x", true)).toBe("09:00");
+    expect(timingDraftAfterInput("09:00", ":", true)).toBe("09:00");
+    expect(timingDraftAfterInput("09:00", "Backspace", false)).toBe("09:0");
+  });
+
+  test("selects reminder modes without opening or inheriting the other mode's value", () => {
+    expect(reminderValueForMode("periodic", "1.5", "periodic")).toBe("1.5");
+    expect(reminderValueForMode("timeOfDay", "09:30", "periodic")).toBe("1");
+    expect(reminderValueForMode("timeOfDay", "09:30", "timeOfDay")).toBe("09:30");
+    expect(reminderValueForMode("periodic", "1.5", "timeOfDay")).toBe("00:00");
+  });
+
   test("formats periodic reminder values as short human labels", () => {
     expect(periodicLabel("0.5")).toBe("Every 30min");
     expect(periodicLabel("1")).toBe("Every 1h");
@@ -53,6 +95,11 @@ describe("Simeioma model", () => {
     expect(normalizePeriodicHours("0.5")).toBe("0.5");
     expect(normalizePeriodicHours("bad")).toBe("1");
     expect(normalizePeriodicHours("0")).toBe("0.25");
+  });
+
+  test("turns the launcher into a visibility toggle at the note limit", () => {
+    expect(launcherPrimaryAction(MAX_NOTES - 1)).toBe("create");
+    expect(launcherPrimaryAction(MAX_NOTES)).toBe("toggle-visibility");
   });
 
   test("creates at most ten notes without advancing color after the cap", () => {
@@ -221,6 +268,15 @@ describe("Simeioma model", () => {
 
     expect(next.notes.find((item) => item.id === "first")?.viewedAt).toBe("2026-05-18T10:00:00.000Z");
     expect(next.notes.find((item) => item.id === "second")?.viewedAt).toBe("2026-05-18T11:00:00.000Z");
+  });
+
+  test("does not rewrite a note that is already viewed", () => {
+    const state = {
+      ...createInitialState(0),
+      notes: [note({ updatedAt: "2026-05-18T10:00:00.000Z", viewedAt: "2026-05-18T10:00:00.000Z" })],
+    };
+
+    expect(markNoteViewed(state, "note", "2026-05-18T11:00:00.000Z")).toBe(state);
   });
 
   test("updates a moved note position for future stacking", () => {

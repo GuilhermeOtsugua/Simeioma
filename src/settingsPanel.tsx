@@ -4,24 +4,128 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "@tauri-apps/api/core";
 import {
   DEFAULT_SETTINGS,
+  NOTE_COLORS,
+  formatTimingDraft,
   normalizeTimeOfDay,
   periodicLabel,
+  reminderValueForMode,
+  timingDraftAfterInput,
   type ExportFormat,
   type ReminderMode,
   type ReminderTarget,
+  type NoteColor,
   type SketchBrushSize,
-  type SketchRenderingMode,
   type Settings,
 } from "./simeiomaModel";
 import { keyCombo, pointerCombo } from "./inputCombos";
 
-type KeybindSetting = keyof Pick<Settings, "strikeKeybind" | "scribbleKeybind" | "copyNoteKeybind" | "newNoteKeybind" | "hideNotesKeybind">;
+type KeybindSetting = keyof Pick<Settings, "strikeKeybind" | "scribbleKeybind" | "newNoteKeybind" | "hideNotesKeybind">;
 
 export function SettingsPanel(props: { settings: Settings; onChange: (patch: Partial<Settings>) => void }) {
   const [editingTiming, setEditingTiming] = createSignal<ReminderMode | null>(null);
   const [periodicDraft, setPeriodicDraft] = createSignal("");
   const [timeOfDayDraft, setTimeOfDayDraft] = createSignal("");
   const [capturingKeybind, setCapturingKeybind] = createSignal<KeybindSetting | null>(null);
+  const [copyAccent, setCopyAccent] = createSignal(randomNoteAccent());
+  const [formatAccent, setFormatAccent] = createSignal(randomNoteAccent());
+  const [brushAccent, setBrushAccent] = createSignal(randomNoteAccent());
+  const [enabledAccent, setEnabledAccent] = createSignal(randomNoteAccent());
+  const [reminderAccent, setReminderAccent] = createSignal(randomNoteAccent());
+  const [targetAccent, setTargetAccent] = createSignal(randomNoteAccent());
+  let periodicInputRef: HTMLInputElement | undefined;
+  let timeOfDayInputRef: HTMLInputElement | undefined;
+  let periodicOverwritePending = false;
+  let timeOfDayOverwritePending = false;
+
+  const focusTiming = (mode: ReminderMode) => {
+    if (mode === "periodic") periodicOverwritePending = true;
+    else timeOfDayOverwritePending = true;
+    window.setTimeout(() => {
+      const input = mode === "periodic" ? periodicInputRef : timeOfDayInputRef;
+      input?.focus();
+      const end = input?.value.length ?? 0;
+      input?.setSelectionRange(end, end);
+    }, 0);
+  };
+
+  const selectReminderMode = (mode: ReminderMode) => {
+    const reminderValue = reminderValueForMode(
+      props.settings.reminderMode,
+      props.settings.reminderValue,
+      mode,
+    );
+    setReminderAccent(randomNoteAccent(reminderAccent().key));
+    setEditingTiming(null);
+    props.onChange({ reminderMode: mode, reminderValue });
+  };
+
+  const editReminderTiming = (mode: ReminderMode) => {
+    const reminderValue = reminderValueForMode(
+      props.settings.reminderMode,
+      props.settings.reminderValue,
+      mode,
+    );
+    if (mode === "periodic") {
+      setPeriodicDraft(formatTimingDraft(durationToDigits(reminderValue)));
+    } else {
+      setTimeOfDayDraft(formatTimingDraft(timeToDigits(reminderValue)));
+    }
+    props.onChange({ reminderMode: mode, reminderValue });
+    setEditingTiming(mode);
+    focusTiming(mode);
+  };
+
+  const commitReminderTiming = (mode: ReminderMode) => {
+    const reminderValue = mode === "periodic"
+      ? durationDigitsToHours(periodicDraft())
+      : normalizeTimeOfDay(timeOfDayDraft());
+    props.onChange({ reminderMode: mode, reminderValue });
+    setEditingTiming(null);
+  };
+
+  const handleTimingKeyDown = (mode: ReminderMode, event: KeyboardEvent) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitReminderTiming(mode);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setEditingTiming(null);
+      return;
+    }
+    if (/^\d$/.test(event.key) || event.key === "Backspace") {
+      event.preventDefault();
+      const currentValue = mode === "periodic" ? periodicDraft() : timeOfDayDraft();
+      const replace = mode === "periodic" ? periodicOverwritePending : timeOfDayOverwritePending;
+      const nextValue = timingDraftAfterInput(currentValue, event.key, replace);
+      if (mode === "periodic") {
+        periodicOverwritePending = false;
+        setPeriodicDraft(nextValue);
+      } else {
+        timeOfDayOverwritePending = false;
+        setTimeOfDayDraft(nextValue);
+      }
+      return;
+    }
+    if (event.key.length === 1 || event.key === "Delete") event.preventDefault();
+  };
+
+  const handleTimingPaste = (mode: ReminderMode, event: ClipboardEvent) => {
+    event.preventDefault();
+    const pasted = event.clipboardData?.getData("text").trim() ?? "";
+    if (!/^\d+$/.test(pasted)) return;
+    const currentValue = mode === "periodic" ? periodicDraft() : timeOfDayDraft();
+    const replace = mode === "periodic" ? periodicOverwritePending : timeOfDayOverwritePending;
+    const nextValue = timingDraftAfterInput(currentValue, pasted, replace);
+    if (mode === "periodic") {
+      periodicOverwritePending = false;
+      setPeriodicDraft(nextValue);
+    } else {
+      timeOfDayOverwritePending = false;
+      setTimeOfDayDraft(nextValue);
+    }
+  };
 
   const reset = (event: MouseEvent, patch: Partial<Settings>) => {
     event.preventDefault();
@@ -36,142 +140,216 @@ export function SettingsPanel(props: { settings: Settings; onChange: (patch: Par
       multiple: false,
       defaultPath: props.settings.exportPath || (await documentDir()),
     });
-    if (typeof selected === "string") {
-      props.onChange({ exportPath: selected, copyAfterSave: true });
-    }
+    if (typeof selected === "string") props.onChange({ exportPath: selected });
   };
 
   return (
     <div class="settings-stack">
-      <label class="setting-row">
+      <section class="settings-section" aria-labelledby="settings-files-heading">
+        <h2 id="settings-files-heading">Files</h2>
+        <div class="settings-group">
+      <div class="setting-row">
         <span>Save path</span>
-        <div class="path-picker">
-          <input
-            aria-label="Save path"
-            value={props.settings.exportPath}
-            placeholder="Documents"
-            onInput={(event) => props.onChange({ exportPath: event.currentTarget.value })}
-            onContextMenu={(event) => reset(event, { exportPath: DEFAULT_SETTINGS.exportPath })}
-          />
-          <button type="button" onClick={pickExportPath}>Browse</button>
-        </div>
-      </label>
+        <button
+          type="button"
+          class="path-input"
+          title={props.settings.exportPath || "Documents"}
+          onClick={pickExportPath}
+          onContextMenu={(event) => reset(event, { exportPath: DEFAULT_SETTINGS.exportPath })}
+        >
+          {props.settings.exportPath || "Documents"}
+        </button>
+      </div>
 
-      <label class="setting-row compact">
+      <div class="setting-row compact">
         <span>Copy after save</span>
-        <input type="checkbox" checked={props.settings.copyAfterSave} onChange={(event) => props.onChange({ copyAfterSave: event.currentTarget.checked })} onContextMenu={(event) => reset(event, { copyAfterSave: DEFAULT_SETTINGS.copyAfterSave })} />
-      </label>
+        <input
+          class="setting-checkbox"
+          style={accentStyle(copyAccent())}
+          aria-label="Copy after save"
+          type="checkbox"
+          checked={props.settings.copyAfterSave}
+          onChange={(event) => {
+            setCopyAccent(randomNoteAccent(copyAccent().key));
+            props.onChange({ copyAfterSave: event.currentTarget.checked });
+          }}
+          onContextMenu={(event) => reset(event, { copyAfterSave: DEFAULT_SETTINGS.copyAfterSave })}
+        />
+      </div>
 
       <label class="setting-row">
         <span>Format</span>
-        <select value={props.settings.exportFormat} onChange={(event) => props.onChange({ exportFormat: event.currentTarget.value as ExportFormat })} onContextMenu={(event) => reset(event, { exportFormat: DEFAULT_SETTINGS.exportFormat })}>
-          <option value="txt">txt</option>
-          <option value="markdown">markdown</option>
-          <option value="png">png</option>
-          <option value="jpeg">jpeg</option>
+        <select
+          class="accent-select"
+          style={accentStyle(formatAccent())}
+          value={props.settings.exportFormat}
+          onPointerDown={() => setFormatAccent(randomNoteAccent(formatAccent().key))}
+          onChange={(event) => {
+            setFormatAccent(randomNoteAccent(formatAccent().key));
+            props.onChange({ exportFormat: event.currentTarget.value as ExportFormat });
+          }}
+          onContextMenu={(event) => reset(event, { exportFormat: DEFAULT_SETTINGS.exportFormat })}
+        >
+          <option value="txt">TXT</option>
+          <option value="markdown">Markdown</option>
+          <option value="png">PNG</option>
+          <option value="jpeg">JPEG</option>
         </select>
       </label>
 
+        </div>
+      </section>
+
+      <section class="settings-section" aria-labelledby="settings-shortcuts-heading">
+        <h2 id="settings-shortcuts-heading">Shortcuts</h2>
+        <div class="settings-group">
       <SettingKeybind label="Cross out" ariaLabel="Cross out keybind" value={props.settings.strikeKeybind} onCapture={() => setCapturingKeybind("strikeKeybind")} onReset={(event) => reset(event, { strikeKeybind: DEFAULT_SETTINGS.strikeKeybind })} />
       <SettingKeybind label="Scribble" ariaLabel="Scribble keybind" value={props.settings.scribbleKeybind} onCapture={() => setCapturingKeybind("scribbleKeybind")} onReset={(event) => reset(event, { scribbleKeybind: DEFAULT_SETTINGS.scribbleKeybind })} />
-      <SettingKeybind label="Copy note" ariaLabel="Copy note keybind" value={props.settings.copyNoteKeybind} onCapture={() => setCapturingKeybind("copyNoteKeybind")} onReset={(event) => reset(event, { copyNoteKeybind: DEFAULT_SETTINGS.copyNoteKeybind })} />
       <SettingKeybind label="New note" ariaLabel="New note keybind" value={props.settings.newNoteKeybind} onCapture={() => setCapturingKeybind("newNoteKeybind")} onReset={(event) => reset(event, { newNoteKeybind: DEFAULT_SETTINGS.newNoteKeybind })} />
       <SettingKeybind label="Hide notes" ariaLabel="Hide notes keybind" value={props.settings.hideNotesKeybind} onCapture={() => setCapturingKeybind("hideNotesKeybind")} onReset={(event) => reset(event, { hideNotesKeybind: DEFAULT_SETTINGS.hideNotesKeybind })} />
-
-      <label class="setting-row">
-        <span>Sketch rendering</span>
-        <select aria-label="Sketch rendering" value={props.settings.sketchRenderingMode} onChange={(event) => props.onChange({ sketchRenderingMode: event.currentTarget.value as SketchRenderingMode })} onContextMenu={(event) => reset(event, { sketchRenderingMode: DEFAULT_SETTINGS.sketchRenderingMode })}>
-          <option value="legacy">Legacy</option>
-          <option value="simeioma-adaptive">Simeioma adaptive</option>
-          <option value="tomodachi-pixel">Tomodachi pixel</option>
-        </select>
-      </label>
-
-      <div class="setting-row" onContextMenu={(event) => reset(event, { sketchBrushSize: DEFAULT_SETTINGS.sketchBrushSize })}>
-        <span>Brush</span>
-        <div class="segmented brush-size-picker" role="group" aria-label="Sketch brush size">
-          {(["thin", "default", "thick"] as SketchBrushSize[]).map((size) => (
-            <button
-              type="button"
-              class={props.settings.sketchBrushSize === size ? "is-active" : ""}
-              aria-pressed={props.settings.sketchBrushSize === size}
-              onClick={() => props.onChange({ sketchBrushSize: size })}
-            >
-              {size === "default" ? "Default" : size[0].toUpperCase() + size.slice(1)}
-            </button>
-          ))}
         </div>
+      </section>
+
+      <section class="settings-section" aria-labelledby="settings-drawing-heading">
+        <h2 id="settings-drawing-heading">Drawing</h2>
+        <div class="settings-group">
+      <div class="segmented brush-size-picker drawing-options" style={accentStyle(brushAccent())} role="group" aria-label="Sketch brush size" onContextMenu={(event) => reset(event, { sketchBrushSize: DEFAULT_SETTINGS.sketchBrushSize })}>
+        {(["thin", "default", "thick"] as SketchBrushSize[]).map((size) => (
+          <button
+            type="button"
+            class="option-selection-transition"
+            classList={{ "is-active": props.settings.sketchBrushSize === size }}
+            aria-pressed={props.settings.sketchBrushSize === size}
+            onClick={() => {
+              setBrushAccent(randomNoteAccent(brushAccent().key));
+              props.onChange({ sketchBrushSize: size });
+            }}
+          >
+            {size === "default" ? "Default" : size[0].toUpperCase() + size.slice(1)}
+          </button>
+        ))}
       </div>
 
-      <label class="setting-row compact">
-        <span>Reminders</span>
-        <input type="checkbox" checked={props.settings.remindersEnabled} onChange={(event) => props.onChange({ remindersEnabled: event.currentTarget.checked })} onContextMenu={(event) => reset(event, { remindersEnabled: DEFAULT_SETTINGS.remindersEnabled })} />
-      </label>
+        </div>
+      </section>
+
+      <section class="settings-section" aria-labelledby="settings-reminders-heading">
+        <h2 id="settings-reminders-heading">Reminders</h2>
+        <div class="settings-group">
+      <div class="setting-row compact">
+        <span>Enabled</span>
+        <input
+          class="setting-checkbox"
+          style={accentStyle(enabledAccent())}
+          aria-label="Enable reminders"
+          type="checkbox"
+          checked={props.settings.remindersEnabled}
+          onChange={(event) => {
+            setEnabledAccent(randomNoteAccent(enabledAccent().key));
+            props.onChange({ remindersEnabled: event.currentTarget.checked });
+          }}
+          onContextMenu={(event) => reset(event, { remindersEnabled: DEFAULT_SETTINGS.remindersEnabled })}
+        />
+      </div>
 
       <div class="setting-row">
         <span>Timing</span>
-        <div class="timing-picker">
-          <Show
-            when={editingTiming() === "periodic"}
-            fallback={
-              <button type="button" class={props.settings.reminderMode === "periodic" ? "is-active" : ""} onClick={() => {
-                const value = props.settings.reminderMode === "periodic" ? durationToDigits(props.settings.reminderValue) : "0100";
-                setPeriodicDraft(maskDigits(value));
-                props.onChange({ reminderMode: "periodic", reminderValue: durationDigitsToHours(value) });
-                setEditingTiming("periodic");
-              }} onContextMenu={(event) => reset(event, { reminderMode: DEFAULT_SETTINGS.reminderMode, reminderValue: DEFAULT_SETTINGS.reminderValue })}>
-                Periodic
-                <small>{periodicLabel(props.settings.reminderValue)}</small>
-              </button>
-            }
-          >
-            <input aria-label="Periodic hours" inputMode="decimal" value={periodicDraft()} onInput={(event) => setPeriodicDraft(maskDigits(event.currentTarget.value))} onBlur={(event) => {
-              props.onChange({ reminderMode: "periodic", reminderValue: durationDigitsToHours(event.currentTarget.value) });
-              setEditingTiming(null);
-            }} onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                props.onChange({ reminderMode: "periodic", reminderValue: durationDigitsToHours(event.currentTarget.value) });
-                setEditingTiming(null);
+        <div
+          class="timing-picker"
+          style={accentStyle(reminderAccent())}
+        >
+          <div class="timing-option option-selection-transition" classList={{ "is-active": props.settings.reminderMode === "periodic" }}>
+            <button
+              type="button"
+              class="timing-mode-button"
+              aria-pressed={props.settings.reminderMode === "periodic"}
+              onClick={() => selectReminderMode("periodic")}
+              onContextMenu={(event) => reset(event, { reminderMode: DEFAULT_SETTINGS.reminderMode, reminderValue: DEFAULT_SETTINGS.reminderValue })}
+            >
+              Periodic
+            </button>
+            <Show
+              when={editingTiming() === "periodic"}
+              fallback={
+                <button type="button" class="timing-value-button" onClick={() => editReminderTiming("periodic")}>
+                  {periodicLabel(reminderValueForMode(props.settings.reminderMode, props.settings.reminderValue, "periodic"))}
+                </button>
               }
-            }} onContextMenu={(event) => reset(event, { reminderMode: DEFAULT_SETTINGS.reminderMode, reminderValue: DEFAULT_SETTINGS.reminderValue })} />
-          </Show>
+            >
+              <input
+                ref={periodicInputRef}
+                aria-label="Periodic hours"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={5}
+                value={periodicDraft()}
+                onBeforeInput={(event) => event.preventDefault()}
+                onPaste={(event) => handleTimingPaste("periodic", event)}
+                onBlur={() => commitReminderTiming("periodic")}
+                onKeyDown={(event) => handleTimingKeyDown("periodic", event)}
+                onContextMenu={(event) => reset(event, { reminderMode: DEFAULT_SETTINGS.reminderMode, reminderValue: DEFAULT_SETTINGS.reminderValue })}
+              />
+            </Show>
+          </div>
 
-          <Show
-            when={editingTiming() === "timeOfDay"}
-            fallback={
-              <button type="button" class={props.settings.reminderMode === "timeOfDay" ? "is-active" : ""} onClick={() => {
-                const value = props.settings.reminderMode === "timeOfDay" ? timeToDigits(props.settings.reminderValue || "0000") : "00:00";
-                setTimeOfDayDraft(maskDigits(value));
-                props.onChange({ reminderMode: "timeOfDay", reminderValue: normalizeTimeOfDay(value) });
-                setEditingTiming("timeOfDay");
-              }} onContextMenu={(event) => reset(event, { reminderMode: DEFAULT_SETTINGS.reminderMode, reminderValue: DEFAULT_SETTINGS.reminderValue })}>
-                Time of day
-                <small>{normalizeTimeOfDay(props.settings.reminderValue || "0000")}</small>
-              </button>
-            }
-          >
-            <input aria-label="Time of day" inputMode="numeric" value={timeOfDayDraft()} onInput={(event) => setTimeOfDayDraft(maskDigits(event.currentTarget.value))} onBlur={(event) => {
-              props.onChange({ reminderMode: "timeOfDay", reminderValue: normalizeTimeOfDay(event.currentTarget.value) });
-              setEditingTiming(null);
-            }} onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                props.onChange({ reminderMode: "timeOfDay", reminderValue: normalizeTimeOfDay(event.currentTarget.value) });
-                setEditingTiming(null);
+          <div class="timing-option option-selection-transition" classList={{ "is-active": props.settings.reminderMode === "timeOfDay" }}>
+            <button
+              type="button"
+              class="timing-mode-button"
+              aria-pressed={props.settings.reminderMode === "timeOfDay"}
+              onClick={() => selectReminderMode("timeOfDay")}
+              onContextMenu={(event) => reset(event, { reminderMode: DEFAULT_SETTINGS.reminderMode, reminderValue: DEFAULT_SETTINGS.reminderValue })}
+            >
+              Time of day
+            </button>
+            <Show
+              when={editingTiming() === "timeOfDay"}
+              fallback={
+                <button type="button" class="timing-value-button" onClick={() => editReminderTiming("timeOfDay")}>
+                  {normalizeTimeOfDay(reminderValueForMode(props.settings.reminderMode, props.settings.reminderValue, "timeOfDay"))}
+                </button>
               }
-            }} onContextMenu={(event) => reset(event, { reminderMode: DEFAULT_SETTINGS.reminderMode, reminderValue: DEFAULT_SETTINGS.reminderValue })} />
-          </Show>
+            >
+              <input
+                ref={timeOfDayInputRef}
+                aria-label="Time of day"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={5}
+                value={timeOfDayDraft()}
+                onBeforeInput={(event) => event.preventDefault()}
+                onPaste={(event) => handleTimingPaste("timeOfDay", event)}
+                onBlur={() => commitReminderTiming("timeOfDay")}
+                onKeyDown={(event) => handleTimingKeyDown("timeOfDay", event)}
+                onContextMenu={(event) => reset(event, { reminderMode: DEFAULT_SETTINGS.reminderMode, reminderValue: DEFAULT_SETTINGS.reminderValue })}
+              />
+            </Show>
+          </div>
         </div>
       </div>
 
       <label class="setting-row">
         <span>Target</span>
-        <select value={props.settings.reminderTarget} onChange={(event) => props.onChange({ reminderTarget: event.currentTarget.value as ReminderTarget })} onContextMenu={(event) => reset(event, { reminderTarget: DEFAULT_SETTINGS.reminderTarget })}>
+        <select
+          class="accent-select"
+          style={accentStyle(targetAccent())}
+          value={props.settings.reminderTarget}
+          onPointerDown={() => setTargetAccent(randomNoteAccent(targetAccent().key))}
+          onChange={(event) => {
+            setTargetAccent(randomNoteAccent(targetAccent().key));
+            props.onChange({ reminderTarget: event.currentTarget.value as ReminderTarget });
+          }}
+          onContextMenu={(event) => reset(event, { reminderTarget: DEFAULT_SETTINGS.reminderTarget })}
+        >
           <option value="all">All notes</option>
           <option value="attention">Important or tasks</option>
           <option value="important">Important</option>
           <option value="tasks">Uncrossed tasks</option>
         </select>
       </label>
+
+        </div>
+      </section>
 
       <Show when={capturingKeybind()}>
         {(target) => <KeybindCapturePopover label={keybindSettingLabel(target())} onCancel={() => setCapturingKeybind(null)} onCommit={(value) => {
@@ -185,10 +363,10 @@ export function SettingsPanel(props: { settings: Settings; onChange: (patch: Par
 
 function SettingKeybind(props: { label: string; ariaLabel: string; value: string; onCapture: () => void; onReset: (event: MouseEvent) => void }) {
   return (
-    <label class="setting-row">
+    <div class="setting-row">
       <span>{props.label}</span>
       <KeybindInput ariaLabel={props.ariaLabel} value={props.value} onCapture={props.onCapture} onReset={props.onReset} />
-    </label>
+    </div>
   );
 }
 
@@ -196,7 +374,6 @@ function keybindSettingLabel(key: KeybindSetting) {
   return {
     strikeKeybind: "Cross out",
     scribbleKeybind: "Scribble",
-    copyNoteKeybind: "Copy note",
     newNoteKeybind: "New note",
     hideNotesKeybind: "Hide notes",
   }[key];
@@ -262,10 +439,17 @@ function KeybindCapturePopover(props: { label: string; onCommit: (value: string)
   );
 }
 
-function maskDigits(value: string) {
-  const digits = value.replace(/\D/g, "").slice(0, 4);
-  if (digits.length <= 2) return digits;
-  return `${digits.slice(0, 2)}:${digits.slice(2)}`;
+function randomNoteAccent(excludeKey?: string) {
+  const choices = NOTE_COLORS.filter((color) => color.key !== excludeKey);
+  return choices[Math.floor(Math.random() * choices.length)] ?? NOTE_COLORS[0];
+}
+
+function accentStyle(color: NoteColor) {
+  return {
+    "--setting-accent": color.bg,
+    "--setting-accent-line": color.line,
+    "--setting-accent-ink": color.ink,
+  };
 }
 
 function timeToDigits(value: string) {

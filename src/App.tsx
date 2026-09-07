@@ -60,6 +60,7 @@ import {
   windowPositionForVisualCenter,
   type LauncherAnchor,
 } from "./windowGeometry";
+import { createLauncherConfiguration } from "./launcherConfiguration";
 import "./App.css";
 
 const STORAGE_KEY = "simeioma:v1";
@@ -81,7 +82,10 @@ const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(C
 let launcherWasPlaced = false;
 let launcherIsConfiguring = false;
 let launcherConfigureRun = 0;
-let launcherUserDragging = false;
+const [launcherUserDragging, setLauncherUserDragging] = createSignal(false);
+const configureLauncherWindow = createLauncherConfiguration(
+  (request: Parameters<typeof applyLauncherWindowConfiguration>) => applyLauncherWindowConfiguration(...request),
+);
 let noteCreationQueue: Promise<void> = Promise.resolve();
 
 function App() {
@@ -137,7 +141,6 @@ function LauncherWindow() {
 
   onMount(() => {
     if (import.meta.env.DEV) resetDebugSessionState(setState);
-    configureLauncherWindow(false);
     let movedUnlisten: (() => void) | undefined;
     let moveSaveTimer: number | undefined;
 
@@ -161,7 +164,7 @@ function LauncherWindow() {
       getCurrentWindow().onMoved(() => {
         if (launcherIsConfiguring) return;
         window.clearTimeout(moveSaveTimer);
-        if (launcherUserDragging) return;
+        if (launcherUserDragging()) return;
         moveSaveTimer = window.setTimeout(() => {
           void settleLauncherPosition();
         }, 80);
@@ -182,13 +185,13 @@ function LauncherWindow() {
   });
 
   createEffect(() => {
-    if (launcherUserDragging) return;
-    configureLauncherWindow(
+    if (launcherUserDragging()) return;
+    void configureLauncherWindow([
       menuOpen(),
       confirmingExit(),
       launcherAnchor,
       (anchor) => (launcherAnchor = anchor),
-    );
+    ]).catch((error) => console.error("Launcher window configuration failed", error));
   });
 
   createEffect(() => {
@@ -288,20 +291,22 @@ function LauncherWindow() {
   const startLauncherDrag = () => {
     if (!isTauri()) return;
     dragStarted = true;
-    launcherUserDragging = true;
+    setLauncherUserDragging(true);
     void getCurrentWindow().startDragging().then(
       () => {
-        launcherUserDragging = false;
         settleLauncherDrag();
       },
       () => {
-        launcherUserDragging = false;
+        setLauncherUserDragging(false);
       },
     );
   };
 
   const settleLauncherPosition = async () => {
-    if (launcherIsConfiguring) return;
+    if (launcherIsConfiguring) {
+      if (launcherUserDragging()) settleLauncherDrag();
+      return;
+    }
     if (await isLeftMouseDown()) {
       settleLauncherDrag();
       return;
@@ -313,7 +318,7 @@ function LauncherWindow() {
       await sleep(30);
     }
     launcherAnchor = await readWindowAnchor();
-    launcherUserDragging = false;
+    setLauncherUserDragging(false);
   };
 
   const settleLauncherDrag = () => {
@@ -398,13 +403,13 @@ function LauncherWindow() {
           pointerDownAt = null;
           pointerMovedTooFar = false;
           suppressNextLauncherClick = false;
-          if (!dragStarted) launcherUserDragging = false;
+          if (!dragStarted) setLauncherUserDragging(false);
         }}
         onLostPointerCapture={() => {
           window.clearTimeout(dragTimer);
           pointerDownAt = null;
           pointerMovedTooFar = false;
-          if (!dragStarted) launcherUserDragging = false;
+          if (!dragStarted) setLauncherUserDragging(false);
         }}
         onClick={(event) => {
           event.preventDefault();
@@ -1636,13 +1641,13 @@ function slug(value: string) {
     .replace(/\s+/g, "-");
 }
 
-async function configureLauncherWindow(
+async function applyLauncherWindowConfiguration(
   menuOpen: boolean,
   confirmingExit = false,
   anchor: LauncherAnchor | null = null,
   setAnchor?: (anchor: LauncherAnchor) => void,
 ) {
-  if (!isTauri() || launcherUserDragging) return;
+  if (!isTauri() || launcherUserDragging()) return;
   const run = ++launcherConfigureRun;
   launcherIsConfiguring = true;
   const expanded = menuOpen || confirmingExit;

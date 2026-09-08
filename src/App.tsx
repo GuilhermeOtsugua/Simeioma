@@ -73,6 +73,8 @@ const LAUNCHER_CONFIRM_CANVAS_HEIGHT = 204;
 const LAUNCHER_IDLE_CANVAS_WIDTH = 30;
 const LAUNCHER_IDLE_CANVAS_HEIGHT = 112;
 const LAUNCHER_SCREEN_MARGIN = 12;
+const SETTINGS_WINDOW_WIDTH = 434;
+const SETTINGS_WINDOW_HEIGHT = 548;
 const UTILITY_WINDOW_WIDTH = 320;
 const UTILITY_WINDOW_HEIGHT = 440;
 const UTILITY_WINDOW_MIN_WIDTH = 280;
@@ -504,7 +506,7 @@ function SettingsWindow() {
   const syncTopmostWithFocus = createUtilityTopmostController();
 
   onMount(() => {
-    configureUtilityWindow(UTILITY_WINDOW_WIDTH, UTILITY_WINDOW_HEIGHT);
+    configureUtilityWindow(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
     ensureDefaultExportPath(setState);
 
     let focusUnlisten: (() => void) | undefined;
@@ -1969,8 +1971,8 @@ async function openSettingsWindow() {
   const monitor = await primaryMonitor();
   const scale = monitor?.scaleFactor || 1;
   const work = monitor?.workArea;
-  const width = UTILITY_WINDOW_WIDTH;
-  const height = UTILITY_WINDOW_HEIGHT;
+  const width = SETTINGS_WINDOW_WIDTH;
+  const height = SETTINGS_WINDOW_HEIGHT;
   const x = work ? (work.position.x + work.size.width) / scale - width - 88 : 180;
   const y = work ? (work.position.y + work.size.height) / scale - height - 88 : 140;
 

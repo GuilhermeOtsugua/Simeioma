@@ -4,7 +4,6 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "@tauri-apps/api/core";
 import {
   DEFAULT_SETTINGS,
-  NOTE_COLORS,
   formatTimingDraft,
   normalizeTimeOfDay,
   periodicLabel,
@@ -18,6 +17,7 @@ import {
   type Settings,
 } from "./simeiomaModel";
 import { keyCombo, pointerCombo } from "./inputCombos";
+import { randomSettingsAccent as randomNoteAccent } from "./settingsAppearance";
 
 type KeybindSetting = keyof Pick<Settings, "strikeKeybind" | "scribbleKeybind" | "newNoteKeybind" | "hideNotesKeybind">;
 
@@ -437,11 +437,6 @@ function KeybindCapturePopover(props: { label: string; onCommit: (value: string)
       <button type="button" class="ghost-close" onPointerDown={(event) => event.stopPropagation()} onClick={props.onCancel}>Cancel</button>
     </div>
   );
-}
-
-function randomNoteAccent(excludeKey?: string) {
-  const choices = NOTE_COLORS.filter((color) => color.key !== excludeKey);
-  return choices[Math.floor(Math.random() * choices.length)] ?? NOTE_COLORS[0];
 }
 
 function accentStyle(color: NoteColor) {

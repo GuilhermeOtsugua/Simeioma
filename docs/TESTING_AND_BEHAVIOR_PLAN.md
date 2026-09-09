@@ -8,11 +8,11 @@ Simeioma should use three test layers.
 
 Fast domain tests cover logic that does not need a browser or native Tauri process. This includes note limits, note spawn offsets, default settings, reminder eligibility, reminder counts, and development storage reset rules. These tests should run through Vitest and should stay independent from Solid components where possible.
 
-Browser route tests cover user-visible webview behavior. These tests should use Playwright against the Vite app routes and verify behavior through public UI controls: launcher clicks, settings fields, note list behavior, button behavior, and route rendering.
+Browser route tests are optional and non-authoritative for native focus, dragging, transparent windows, and popups. Do not run them by default; use the native app and focused smoke checks for these behaviors.
 
 Native smoke checks cover Windows/Tauri behavior that browser tests cannot prove. This includes actual window creation, first-click activation behavior, right-click menu resizing, single-instance ownership, tray behavior, and close-to-tray behavior. These checks should stay small because native desktop automation is slower and more fragile.
 
-Tauri WebDriver is not the first default. It may be useful later, but the immediate value comes from Vitest, Playwright route tests, and focused Windows smoke checks.
+Tauri WebDriver is not the first default. The immediate value comes from Vitest, Rust unit tests, and focused Windows smoke checks. `bun run test:diagnostics:native` runs an isolated opt-in WebView2 fixture covering popup geometry, diagnostic export, fault injection/recovery, and missing snapshot responses; it is not a broad visual QA suite.
 
 ## TDD Rule
 
@@ -20,7 +20,7 @@ Simeioma implementation should use vertical TDD slices. Each behavior starts wit
 
 ## Behavior Decisions
 
-Every new dev/debug run should start from a clean note session. This is temporary development behavior to keep visual and native debugging reliable. The reset should remove notes without destroying the shape of settings and launcher state.
+Dev/debug runs preserve the existing note session by default. `SIMEIOMA_DEBUG_SESSION=clean` opts into a separate storage namespace that starts fresh once per native session, without deleting normal notes or changing normal settings. Release builds ignore this debug-only mode. See [DEBUG_DIAGNOSTICS.md](DEBUG_DIAGNOSTICS.md).
 
 Simeioma should be a single-instance desktop utility. Opening the app twice should not create two independent launcher strips. One process should own the launcher and tray surface.
 
@@ -30,7 +30,13 @@ The launcher strip should use `Ctrl + left click` to hide visible notes or, when
 
 The launcher list action should open a separate notes-list window, similar to the settings window. It must not reopen every stored or closed note.
 
-A release launch begins with saved notes hidden. When no note is visible, the first newly created note should use the launcher-origin baseline size and position. When notes are visible, the next note should stack from the latest visible note and inherit its size.
+A release launch begins with saved notes hidden. When no note is visible, the first newly created note uses the launcher-origin baseline size and position. Launcher creation stacks from the latest visible, non-minimized note; Ctrl+N retains the focused note as its anchor. Both paths sample live native position/size and share the same 41px downward offset and size inheritance.
+
+The note bottom limit is the lowest resting-strip edge permitted by the launcher parking envelope: work-area bottom minus 12px minus half the difference between the 184px menu and 96px resting strip (56 logical pixels total). It is independent of whether the menu is currently expanded. If the next offset would cross that limit, overlay the source exactly. If the source is already outside any safe edge, preserve its exact position and dimensions—do not clamp, rescue, or move it. Existing notes/manual dragging are unaffected. New note and utility windows remain hidden until their final native position is applied, because Windows/Tao can otherwise substitute a default position for an off-monitor origin. Fresh spawns use rounded physical coordinates from the target monitor, avoiding ambiguous logical coordinates across mixed-DPI displays.
+
+Settings and Notes List reserve distinct slots growing inward from the visible note footprint (or the default note slot): launcher → notes → list → Settings on the left, mirrored on the right. Align tops near the top of the launcher's current monitor, bottoms near its bottom, with 32px preferred gaps. Default sizes remain 434×548 and 320×440. Preserve already-open/manual geometry, including minimized restore bounds. On constrained displays, try other free positions, then narrower/minimum-size scrolling surfaces (280×300 minimum); if no non-overlapping arrangement fits, show a native notice without moving existing windows. Opening order must not change reserved slots, including compact layouts. Tray Settings requests use the same serialized creation path.
+
+Native verification covers repeated bounded spawns, a partially off-screen resized source and keyboard clone, tray/menu utility creation, minimized reservation, reverse opening order, and compact size preservation. Pure tests cover both screenshot arrangements, compact fallback, and negative-coordinate/scaled work areas. Physical mixed-DPI monitor dragging and final visual preference remain manual checks.
 
 Notes should be capped at ten total saved notes across sessions. Attempts to create more notes should do nothing visible and should not advance the launcher color cycle.
 

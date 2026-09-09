@@ -1,3 +1,5 @@
+import { clampSpawnOrigin, rectFits, type SpawnBounds } from "./spawnPlacement";
+
 export type ReminderMode = "periodic" | "timeOfDay";
 export type ReminderTarget = "all" | "important" | "tasks" | "attention";
 export type ExportFormat = "txt" | "markdown" | "png" | "jpeg";
@@ -147,12 +149,15 @@ export function nextNotePosition(index: number, origin: { x: number; y: number }
   };
 }
 
-export function nextNotePositionFromLatest(latest: Note | undefined, origin: { x: number; y: number }) {
-  if (!latest?.position) return origin;
-  return {
-    x: latest.position.x,
-    y: latest.position.y + NOTE_TITLE_HEIGHT + 3,
-  };
+export function nextNotePositionFromLatest(latest: Note | undefined, origin: { x: number; y: number }, bounds?: SpawnBounds) {
+  const size = latest?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE };
+  if (!latest?.position) return bounds ? clampSpawnOrigin(origin, size, bounds) : origin;
+  const position = { x: latest.position.x, y: latest.position.y + NOTE_TITLE_HEIGHT + 3 };
+  if (bounds && (!rectFits({ ...latest.position, ...size }, bounds) || !rectFits({ ...position, ...size }, bounds))) {
+    // An edge-placed source remains the user's anchor. Never "rescue" its clone elsewhere.
+    return { ...latest.position };
+  }
+  return position;
 }
 
 export function createNoteInState(
@@ -163,6 +168,7 @@ export function createNoteInState(
     now: string;
     origin?: { x: number; y: number };
     spawnAfter?: Note;
+    spawnBounds?: SpawnBounds;
   },
 ) {
   if (state.notes.length >= MAX_NOTES) {
@@ -180,7 +186,7 @@ export function createNoteInState(
     createdAt: input.now,
     updatedAt: input.now,
     viewedAt: input.now,
-    position: input.origin ? nextNotePositionFromLatest(input.spawnAfter, input.origin) : undefined,
+    position: input.origin ? nextNotePositionFromLatest(input.spawnAfter, input.origin, input.spawnBounds) : undefined,
     size: input.spawnAfter?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE },
   };
 

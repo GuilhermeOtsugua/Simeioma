@@ -1,8 +1,25 @@
+#[cfg(debug_assertions)]
+mod diagnostics_store;
+#[cfg(debug_assertions)]
+mod diagnostics_writer;
+#[cfg(debug_assertions)]
+mod diagnostics;
+#[cfg(debug_assertions)]
+mod diagnostics_smoke;
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager, WebviewUrl, WebviewWindowBuilder,
+    Emitter, Manager,
 };
+
+#[derive(Default)]
+struct PendingSettings(std::sync::atomic::AtomicBool);
+
+#[tauri::command]
+fn take_settings_request(window: tauri::WebviewWindow, pending: tauri::State<PendingSettings>) -> bool {
+    window.label() == "main" && pending.0.swap(false, std::sync::atomic::Ordering::SeqCst)
+}
 
 #[tauri::command]
 fn save_text_file(directory: String, filename: String, contents: String) -> Result<String, String> {
@@ -25,7 +42,8 @@ fn visible_note_window_labels(app: tauri::AppHandle) -> Vec<String> {
     app.webview_windows()
         .into_iter()
         .filter_map(|(label, window)| {
-            (label.starts_with("note-") && window.is_visible().unwrap_or(false)).then_some(label)
+            (label.starts_with("note-") && window.is_visible().unwrap_or(false)
+                && !window.is_minimized().unwrap_or(false)).then_some(label)
         })
         .collect()
 }
@@ -42,6 +60,7 @@ fn set_note_windows_visibility(
         }
         if let Some(window) = app.get_webview_window(label) {
             if visible {
+                window.unminimize().map_err(|error| error.to_string())?;
                 window.show().map_err(|error| error.to_string())?;
             } else {
                 window.hide().map_err(|error| error.to_string())?;
@@ -64,6 +83,54 @@ fn restore_utility_window(app: tauri::AppHandle, label: String) -> Result<(), St
         return Ok(());
     };
     restore_and_focus_utility(&window)
+}
+
+#[tauri::command]
+fn window_spawn_geometry(app: tauri::AppHandle, label: String) -> Result<serde_json::Value, String> {
+    if !matches!(label.as_str(), "main" | "settings" | "notes-list") && !label.starts_with("note-") {
+        return Err("Invalid spawn window".into());
+    }
+    let window = app.get_webview_window(&label).ok_or("Spawn window closed")?;
+    let (position, outer) = window_restore_bounds(&window)?;
+    let inner = if window.is_minimized().map_err(|_| "Window state unavailable")? { outer }
+        else { window.inner_size().map_err(|_| "Window size unavailable")? };
+    let monitor = match window.current_monitor().map_err(|_| "Monitor unavailable")? {
+        Some(monitor) => monitor,
+        None => window.primary_monitor().map_err(|_| "Monitor unavailable")?.ok_or("Monitor unavailable")?,
+    };
+    let work = monitor.work_area();
+    Ok(serde_json::json!({
+        "position": {"x": position.x, "y": position.y},
+        "outer": {"width": outer.width, "height": outer.height},
+        "inner": {"width": inner.width, "height": inner.height},
+        "monitor": {"scaleFactor": monitor.scale_factor(), "workArea": {
+            "position": {"x": work.position.x, "y": work.position.y},
+            "size": {"width": work.size.width, "height": work.size.height}
+        }}
+    }))
+}
+
+fn window_restore_bounds(window: &tauri::WebviewWindow) -> Result<(tauri::PhysicalPosition<i32>, tauri::PhysicalSize<u32>), String> {
+    #[cfg(windows)]
+    if window.is_minimized().map_err(|_| "Window state unavailable")? {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GetWindowPlacement, GWL_EXSTYLE, WINDOWPLACEMENT, WS_EX_TOOLWINDOW};
+        let hwnd = window.hwnd().map_err(|_| "Window handle unavailable")?.0 as _;
+        let mut placement: WINDOWPLACEMENT = unsafe { std::mem::zeroed() };
+        placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
+        if unsafe { GetWindowPlacement(hwnd, &mut placement) } == 0 { return Err("Restore bounds unavailable".into()); }
+        // Normal app windows use workspace coordinates; tool windows use screen coordinates.
+        let mut offset = (0, 0);
+        if unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32 & WS_EX_TOOLWINDOW == 0 {
+            let monitor = window.current_monitor().map_err(|_| "Monitor unavailable")?.ok_or("Monitor unavailable")?;
+            offset = (monitor.work_area().position.x - monitor.position().x, monitor.work_area().position.y - monitor.position().y);
+        }
+        let rect = placement.rcNormalPosition;
+        return Ok((tauri::PhysicalPosition::new(rect.left + offset.0, rect.top + offset.1),
+            tauri::PhysicalSize::new((rect.right - rect.left) as u32, (rect.bottom - rect.top) as u32)));
+    }
+    let position = window.outer_position().map_err(|_| "Window position unavailable")?;
+    let size = window.outer_size().map_err(|_| "Window size unavailable")?;
+    Ok((position, size))
 }
 
 #[tauri::command]
@@ -306,16 +373,25 @@ fn export_path(directory: String, filename: String) -> Result<std::path::PathBuf
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
+        .manage(PendingSettings::default())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_launcher(app);
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            #[cfg(debug_assertions)]
+            diagnostics::setup(app);
             setup_tray(app)?;
+            #[cfg(debug_assertions)]
+            diagnostics_smoke::start(app);
             Ok(())
-        })
+        });
+    #[cfg(debug_assertions)]
+    let builder = builder
+        .plugin(diagnostics::plugin())
+        .on_window_event(diagnostics::window_event)
         .invoke_handler(tauri::generate_handler![
             save_text_file,
             save_binary_file,
@@ -327,8 +403,29 @@ pub fn run() {
             is_left_mouse_down,
             read_clipboard_text,
             write_clipboard_text,
-        ])
-        .run(tauri::generate_context!())
+            take_settings_request,
+            window_spawn_geometry,
+            diagnostics::debug_record,
+            diagnostics::debug_register,
+            diagnostics::debug_before_resize,
+            diagnostics::debug_export,
+        ]);
+    #[cfg(not(debug_assertions))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+            save_text_file,
+            save_binary_file,
+            visible_note_window_labels,
+            set_note_windows_visibility,
+            restore_utility_window,
+            set_utility_focus_state,
+            raise_control,
+            is_left_mouse_down,
+            read_clipboard_text,
+            write_clipboard_text,
+            take_settings_request,
+            window_spawn_geometry,
+        ]);
+    builder.run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
@@ -337,6 +434,8 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Simeioma", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &settings, &quit])?;
+    #[cfg(debug_assertions)]
+    menu.append(&diagnostics::tray_menu(app)?)?;
     let mut tray = TrayIconBuilder::with_id("simeioma")
         .menu(&menu)
         .tooltip("Simeioma")
@@ -345,6 +444,8 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
             "show" => show_launcher(app),
             "settings" => show_settings(app),
             "quit" => app.exit(0),
+            #[cfg(debug_assertions)]
+            id if id.starts_with("debug-") => diagnostics::tray_action(app, id),
             _ => {}
         });
 
@@ -364,23 +465,8 @@ fn show_launcher(app: &tauri::AppHandle) {
 }
 
 fn show_settings(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("settings") {
-        let _ = restore_and_focus_utility(&window);
-        return;
-    }
-
-    let _ = WebviewWindowBuilder::new(
-        app,
-        "settings",
-        WebviewUrl::App("index.html?role=settings".into()),
-    )
-    .title("Simeioma Settings")
-    .inner_size(320.0, 440.0)
-    .min_inner_size(280.0, 300.0)
-    .decorations(false)
-    .transparent(true)
-    .always_on_top(false)
-    .skip_taskbar(false)
-    .resizable(true)
-    .build();
+    // The launcher owns the shared placement/creation queue. Retain early tray clicks
+    // until its listener is ready, rather than constructing a differently placed Settings window here.
+    app.state::<PendingSettings>().0.store(true, std::sync::atomic::Ordering::SeqCst);
+    let _ = app.emit_to("main", "simeioma:settings-requested", ());
 }

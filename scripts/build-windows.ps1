@@ -1,3 +1,9 @@
+param(
+    [switch]$Debug,
+    [switch]$NoBundle,
+    [switch]$DiagnosticsSmoke
+)
+
 $ErrorActionPreference = "Stop"
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -14,5 +20,12 @@ if (-not (Test-Path $vcvars)) {
     throw "MSVC build tools were not found. Install Visual Studio Build Tools with the C++ workload."
 }
 
-cmd.exe /c "call `"$vcvars`" && .\node_modules\.bin\tauri.exe build"
+$buildArgs = ""
+if ($Debug) { $buildArgs += " --debug" }
+if ($NoBundle) { $buildArgs += " --no-bundle" }
+if ($DiagnosticsSmoke) {
+    if (-not $Debug) { throw "Diagnostics smoke builds must use -Debug." }
+    $buildArgs += " --config src-tauri/tauri.diagnostics-test.conf.json"
+}
+cmd.exe /c "call `"$vcvars`" && .\node_modules\.bin\tauri.exe build$buildArgs"
 exit $LASTEXITCODE

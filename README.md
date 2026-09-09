@@ -37,6 +37,8 @@ heavy documents.
 - Scrollable notes list with contextual note actions and confirmed bulk deletion
 - Bulk copy/download as text, Markdown, PNG, or JPEG
 - Settings for export path, default copy behavior, reminders, sketching, and keybinds
+- Launcher-relative, non-overlapping Settings/Notes List spawn slots
+- Bounded note stacking that preserves deliberate edge placement and inherited dimensions
 
 ## Performance Budget
 
@@ -77,10 +79,11 @@ permission, and native-command changes may trigger a slower shell rebuild or
 restart. Use it to debug launcher behavior, transparent windows, custom popups,
 drag/focus behavior, and text selection.
 
-> **Dev-session policy:** launching the dev app intentionally starts from a
-> clean note session. It clears saved notes and enables reminders and
-> copy-after-save for repeatable debugging. Use the release executable for
-> persistence QA or any notes you need to retain.
+> **Dev-session policy:** debug and dev builds preserve saved notes and settings
+> by default. Set `SIMEIOMA_DEBUG_SESSION=clean` before launching to use a separate,
+> freshly cleared test storage namespace; normal saved notes are not cleared.
+> See [debug diagnostics](docs/DEBUG_DIAGNOSTICS.md) for recording, snapshots,
+> reproduction controls, native smoke testing, and privacy limits.
 
 A debug executable is produced after a native debug build at:
 
@@ -88,13 +91,18 @@ A debug executable is produced after a native debug build at:
 src-tauri/target/debug/simeioma.exe
 ```
 
-It is not a standalone packaged build: it expects the Vite dev server. Prefer
-`bun run tauri dev`; only launch it manually when Vite is already running:
+An executable produced by `tauri dev` expects the Vite server. Prefer
+`bun run tauri dev`; only launch that artifact manually when Vite is running:
 
 ```powershell
 bun run dev
 .\src-tauri\target\debug\simeioma.exe
 ```
+
+For a **standalone debug executable with production frontend assets**, run
+`bun run build:desktop:debug`. It uses the same `target/debug/simeioma.exe` path,
+includes the native debug diagnostics suite, and does not require Vite.
+Exit the existing instance before switching executables (the app is single-instance).
 
 ### Windows release build
 

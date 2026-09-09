@@ -4,7 +4,7 @@ export type Size = { width: number; height: number };
 export type WorkArea = { left: number; top: number; right: number; bottom: number; scale: number };
 export type WindowRect = Point & Size;
 
-type MonitorLike = {
+export type MonitorLike = {
   scaleFactor: number;
   workArea: {
     position: Point;

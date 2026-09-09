@@ -1,9 +1,15 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "@tauri-apps/api/core";
+import {
+  invokeObserved as invoke, diagnosticStorageKey, diagnosticRevisionKey, diagnosticChannelName,
+  diagnosticsEnabled, startDiagnostics, setLauncherDiagnosticReader, recordDiagnostic,
+  beforeDiagnosticResize, recordActualLauncherGeometry, scheduleDiagnosticSnapshot, startObservedWindowDrag,
+} from "./diagnostics";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { documentDir } from "@tauri-apps/api/path";
+import { message as showMessage } from "@tauri-apps/plugin-dialog";
 import {
-  LogicalPosition,
+  PhysicalPosition,
   LogicalSize,
   getCurrentWindow,
   primaryMonitor,
@@ -25,7 +31,6 @@ import {
   normalizeNoteColorKey,
   reminderNotes,
   removeNoteFromState,
-  resetNotesForDebug,
   unviewedReminderCount,
   unviewedReminderNotes,
   updateNotePosition,
@@ -59,12 +64,16 @@ import {
   visualCenterFromAnchor,
   windowPositionForVisualCenter,
   type LauncherAnchor,
+  type WorkArea,
+  type WindowRect,
 } from "./windowGeometry";
 import { createLauncherConfiguration } from "./launcherConfiguration";
+import { planUtilityWindows, rectsOverlap, SPAWN_SCREEN_MARGIN, UTILITY_MIN_SIZE, type UtilityRole } from "./spawnPlacement";
+import { readSpawnContext, readSpawnAnchor, readLauncherMonitor, windowRectInWorkArea, waitForWindowCreated, placeCreatedWindow } from "./windowSpawning";
 import "./App.css";
 
-const STORAGE_KEY = "simeioma:v1";
-const CHANNEL_NAME = "simeioma-sync";
+const STORAGE_KEY = diagnosticStorageKey;
+const CHANNEL_NAME = diagnosticChannelName;
 const HOLD_TO_DRAG_MS = 0;
 const LAUNCHER_CANVAS_WIDTH = 64;
 const LAUNCHER_CANVAS_HEIGHT = 204;
@@ -72,13 +81,7 @@ const LAUNCHER_CONFIRM_CANVAS_WIDTH = 360;
 const LAUNCHER_CONFIRM_CANVAS_HEIGHT = 204;
 const LAUNCHER_IDLE_CANVAS_WIDTH = 30;
 const LAUNCHER_IDLE_CANVAS_HEIGHT = 112;
-const LAUNCHER_SCREEN_MARGIN = 12;
-const SETTINGS_WINDOW_WIDTH = 434;
-const SETTINGS_WINDOW_HEIGHT = 548;
-const UTILITY_WINDOW_WIDTH = 320;
-const UTILITY_WINDOW_HEIGHT = 440;
-const UTILITY_WINDOW_MIN_WIDTH = 280;
-const UTILITY_WINDOW_MIN_HEIGHT = 300;
+const LAUNCHER_SCREEN_MARGIN = SPAWN_SCREEN_MARGIN;
 
 const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(CHANNEL_NAME) : null;
 let launcherWasPlaced = false;
@@ -86,12 +89,17 @@ let launcherIsConfiguring = false;
 let launcherConfigureRun = 0;
 const [launcherUserDragging, setLauncherUserDragging] = createSignal(false);
 const configureLauncherWindow = createLauncherConfiguration(
-  (request: Parameters<typeof applyLauncherWindowConfiguration>) => applyLauncherWindowConfiguration(...request),
+  applyLauncherWindowConfiguration,
+  (event, request, status) => recordDiagnostic(`configuration-${event}`, {
+    ...status, menuOpen: request.menuOpen, confirmingExit: request.confirmingExit,
+  }),
 );
 let noteCreationQueue: Promise<void> = Promise.resolve();
+let utilityCreationQueue: Promise<void> = Promise.resolve();
 
 function App() {
   onMount(() => {
+    onCleanup(startDiagnostics(loadState));
     const suppressNativeContextMenu = (event: MouseEvent) => event.preventDefault();
     document.addEventListener("contextmenu", suppressNativeContextMenu);
     onCleanup(() => document.removeEventListener("contextmenu", suppressNativeContextMenu));
@@ -137,13 +145,11 @@ function LauncherWindow() {
   let confirmButtonRef: HTMLButtonElement | undefined;
   let settleDragTimer: number | undefined;
   let togglingNoteVisibility = false;
-  let launcherCreationAnchorId: string | undefined;
-  let launcherCreationPending = 0;
-  let launcherCreationClearTimer: number | undefined;
 
   onMount(() => {
-    if (import.meta.env.DEV) resetDebugSessionState(setState);
     let movedUnlisten: (() => void) | undefined;
+    let settingsUnlisten: (() => void) | undefined;
+    let disposed = false;
     let moveSaveTimer: number | undefined;
 
     const onMessage = (event: MessageEvent) => {
@@ -160,6 +166,17 @@ function LauncherWindow() {
     }, 15000);
 
     if (isTauri()) {
+      const drainSettingsRequest = async () => {
+        if (!disposed && await invoke<boolean>("take_settings_request")) await openSettingsWindow();
+      };
+      const reportSettingsFailure = () => console.error("Settings creation failed (details redacted)");
+      void listen("simeioma:settings-requested", () => {
+        void drainSettingsRequest().catch(reportSettingsFailure);
+      }).then((unlisten) => {
+        if (disposed) { unlisten(); return; }
+        settingsUnlisten = unlisten;
+        void drainSettingsRequest().catch(reportSettingsFailure);
+      }).catch(reportSettingsFailure);
       getCurrentWindow().onFocusChanged(({ payload: focused }) => {
         if (!focused && menuOpen()) setMenuOpen(false);
       });
@@ -181,59 +198,59 @@ function LauncherWindow() {
       window.clearTimeout(dragTimer);
       window.clearTimeout(moveSaveTimer);
       window.clearTimeout(settleDragTimer);
-      window.clearTimeout(launcherCreationClearTimer);
+      disposed = true;
       movedUnlisten?.();
+      settingsUnlisten?.();
     });
   });
 
+  setLauncherDiagnosticReader(() => ({
+    menuOpen: menuOpen(), confirmingExit: confirmingExit(),
+    dragging: launcherUserDragging(), configuring: launcherIsConfiguring,
+    anchor: launcherAnchor, ...configureLauncherWindow.snapshot(),
+    requested: {
+      width: confirmingExit() ? LAUNCHER_CONFIRM_CANVAS_WIDTH : menuOpen() ? LAUNCHER_CANVAS_WIDTH : LAUNCHER_IDLE_CANVAS_WIDTH,
+      height: confirmingExit() ? LAUNCHER_CONFIRM_CANVAS_HEIGHT : menuOpen() ? LAUNCHER_CANVAS_HEIGHT : LAUNCHER_IDLE_CANVAS_HEIGHT,
+    },
+  }));
+
   createEffect(() => {
+    recordDiagnostic("launcher-state", {
+      menuOpen: menuOpen(), confirmingExit: confirmingExit(), dragging: launcherUserDragging(),
+    });
     if (launcherUserDragging()) return;
-    void configureLauncherWindow([
-      menuOpen(),
-      confirmingExit(),
-      launcherAnchor,
-      (anchor) => (launcherAnchor = anchor),
-    ]).catch((error) => console.error("Launcher window configuration failed", error));
+    void configureLauncherWindow({
+      menuOpen: menuOpen(), confirmingExit: confirmingExit(), anchor: launcherAnchor,
+      setAnchor: (anchor) => (launcherAnchor = anchor),
+      setConfirmSide,
+    }).catch(() => console.error("Launcher window configuration failed (details redacted)"));
   });
 
   createEffect(() => {
     if (confirmingExit()) {
-      void updateConfirmSide(setConfirmSide);
       window.setTimeout(() => confirmButtonRef?.focus(), 0);
     }
   });
 
-  const createNote = () => {
-    window.clearTimeout(launcherCreationClearTimer);
-    launcherCreationPending += 1;
-    return enqueueNoteCreation(async () => {
-      try {
-        const current = loadState();
-        const burstAnchor = current.notes.find((note) => note.id === launcherCreationAnchorId);
-        const visibleNotes = burstAnchor ? [] : await visibleNotesInState(current);
-        const origin = await noteSpawnOrigin();
-        const result = createNoteInState(current, {
-          id: createId(),
-          lineId: createId(),
-          now: new Date().toISOString(),
-          origin,
-          spawnAfter: burstAnchor ?? visibleNotes[visibleNotes.length - 1],
-        });
-        if (!result.note) return;
-        launcherCreationAnchorId = result.note.id;
-        saveState(result.state);
-        setState(result.state);
-        await openNoteWindow(result.note.id);
-      } finally {
-        launcherCreationPending -= 1;
-        if (launcherCreationPending === 0) {
-          launcherCreationClearTimer = window.setTimeout(() => {
-            launcherCreationAnchorId = undefined;
-          }, 180);
-        }
-      }
+  const createNote = () => enqueueNoteCreation(async () => {
+    await configureLauncherWindow.whenIdle();
+    const current = loadState();
+    const visibleNotes = await visibleNotesInState(current);
+    const context = await readSpawnContext();
+    const anchor = await readSpawnAnchor(visibleNotes.at(-1), context);
+    const result = createNoteInState(loadState(), {
+      id: createId(),
+      lineId: createId(),
+      now: new Date().toISOString(),
+      origin: context?.origin ?? { x: 160, y: 160 },
+      spawnAfter: anchor.note,
+      spawnBounds: anchor.bounds,
     });
-  };
+    if (!result.note) return;
+    saveState(result.state);
+    setState(result.state);
+    await openNoteWindow(result.note.id, { spawnScale: anchor.scale });
+  });
 
   const exportAll = async (format = state().settings.exportFormat) => {
     const latest = loadState();
@@ -294,7 +311,7 @@ function LauncherWindow() {
     if (!isTauri()) return;
     dragStarted = true;
     setLauncherUserDragging(true);
-    void getCurrentWindow().startDragging().then(
+    void startObservedWindowDrag().then(
       () => {
         settleLauncherDrag();
       },
@@ -506,7 +523,7 @@ function SettingsWindow() {
   const syncTopmostWithFocus = createUtilityTopmostController();
 
   onMount(() => {
-    configureUtilityWindow(SETTINGS_WINDOW_WIDTH, SETTINGS_WINDOW_HEIGHT);
+    configureUtilityWindow();
     ensureDefaultExportPath(setState);
 
     let focusUnlisten: (() => void) | undefined;
@@ -573,7 +590,7 @@ function NotesListWindow() {
   });
 
   onMount(() => {
-    configureUtilityWindow(UTILITY_WINDOW_WIDTH, UTILITY_WINDOW_HEIGHT);
+    configureUtilityWindow();
     let focusUnlisten: (() => void) | undefined;
     let stateUnlisten: (() => void) | undefined;
     let focusEventSeen = false;
@@ -702,16 +719,20 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
   const createNoteFromShortcut = () => enqueueNoteCreation(async () => {
     const latest = loadState();
     const current = latest.notes.find((item) => item.id === props.noteId);
-    const result = createNoteInState(latest, {
+    const context = await readSpawnContext();
+    const anchor = await readSpawnAnchor(current, context);
+    const result = createNoteInState(loadState(), {
       id: createId(),
       lineId: createId(),
       now: new Date().toISOString(),
-      origin: current?.position ?? (await noteSpawnOrigin()),
+      origin: context?.origin ?? current?.position ?? { x: 160, y: 160 },
+      spawnAfter: anchor.note,
+      spawnBounds: anchor.bounds,
     });
     if (!result.note) return;
     saveState(result.state);
     setState(result.state);
-    await openNoteWindow(result.note.id);
+    await openNoteWindow(result.note.id, { spawnScale: anchor.scale });
   });
 
   const handleNoteKeyDown = (event: KeyboardEvent) => {
@@ -803,7 +824,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
       getCurrentWindow().onMoved(({ payload }) => {
         window.clearTimeout(moveSaveTimer);
         moveSaveTimer = window.setTimeout(async () => {
-          const scale = (await primaryMonitor())?.scaleFactor || 1;
+          const scale = await getCurrentWindow().scaleFactor();
           persistNotePosition(props.noteId, { x: payload.x / scale, y: payload.y / scale }, setState);
         }, 80);
       }).then((unlisten) => {
@@ -813,7 +834,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
         scheduleCanvasHydration();
         window.clearTimeout(sizeSaveTimer);
         sizeSaveTimer = window.setTimeout(async () => {
-          const scale = (await primaryMonitor())?.scaleFactor || 1;
+          const scale = await getCurrentWindow().scaleFactor();
           persistNoteSize(props.noteId, { width: payload.width / scale, height: payload.height / scale }, setState);
         }, 80);
       }).then((unlisten) => {
@@ -858,7 +879,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     window.clearTimeout(noteDragTimer);
     notePointerDownAt = { x: event.clientX, y: event.clientY };
     if (HOLD_TO_DRAG_MS > 0) {
-      noteDragTimer = window.setTimeout(() => getCurrentWindow().startDragging(), HOLD_TO_DRAG_MS);
+      noteDragTimer = window.setTimeout(() => { void startObservedWindowDrag(); }, HOLD_TO_DRAG_MS);
     }
   };
 
@@ -867,7 +888,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     const moved = Math.hypot(event.clientX - notePointerDownAt.x, event.clientY - notePointerDownAt.y);
     if (moved > 2) {
       notePointerDownAt = null;
-      getCurrentWindow().startDragging();
+      void startObservedWindowDrag();
     }
   };
 
@@ -936,7 +957,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     resizingNote = true;
     resizeHandle.setPointerCapture(event.pointerId);
     const size = await getCurrentWindow().outerSize();
-    const scale = (await primaryMonitor())?.scaleFactor || 1;
+    const scale = await getCurrentWindow().scaleFactor();
     resizeStart = {
       x: event.clientX,
       y: event.clientY,
@@ -958,7 +979,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     resizeStart = null;
     if (!isTauri()) return;
     const size = await getCurrentWindow().outerSize();
-    const scale = (await primaryMonitor())?.scaleFactor || 1;
+    const scale = await getCurrentWindow().scaleFactor();
     persistNoteSize(
       props.noteId,
       { width: size.width / scale, height: size.height / scale },
@@ -1032,7 +1053,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     if (!isTauri()) return;
     const desiredHeight = Math.min(620, NOTE_TITLE_HEIGHT + 24 + nextHeight);
     const currentSize = await getCurrentWindow().outerSize();
-    const scale = (await primaryMonitor())?.scaleFactor || 1;
+    const scale = await getCurrentWindow().scaleFactor();
     if (desiredHeight > currentSize.height / scale + 12) {
       await getCurrentWindow().setSize(new LogicalSize(Math.max(DEFAULT_NOTE_SIZE, currentSize.width / scale), desiredHeight));
     }
@@ -1460,12 +1481,26 @@ function loadState(): AppState {
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
     };
   } catch {
+    recordDiagnostic("storage-error");
     return createInitialState();
   }
 }
 
 function saveState(state: AppState, options: { broadcast?: boolean } = {}) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    recordDiagnostic("storage-error");
+    throw error;
+  }
+  if (diagnosticsEnabled) {
+    // A diagnostic write counter, not a transactional/cross-window revision guarantee.
+    try {
+      const revision = (Number(localStorage.getItem(diagnosticRevisionKey)) || 0) + 1;
+      localStorage.setItem(diagnosticRevisionKey, String(revision));
+      recordDiagnostic("state-saved", { revision, noteCount: state.notes.length, broadcast: options.broadcast !== false });
+    } catch { recordDiagnostic("storage-error"); }
+  }
   if (options.broadcast !== false) {
     channel?.postMessage({ type: "state" });
     if (isTauri()) void emitTo("notes-list", "simeioma:state-changed").catch(() => undefined);
@@ -1537,20 +1572,6 @@ async function ensureDefaultExportPath(setState: (state: AppState) => void) {
         ...state.settings,
         exportPath,
         copyAfterSave: true,
-      },
-    }),
-    { setState },
-  );
-}
-
-function resetDebugSessionState(setState?: (state: AppState) => void) {
-  updateState(
-    (state) => ({
-      ...resetNotesForDebug(state),
-      settings: {
-        ...state.settings,
-        copyAfterSave: true,
-        remindersEnabled: true,
       },
     }),
     { setState },
@@ -1644,10 +1665,14 @@ function slug(value: string) {
 }
 
 async function applyLauncherWindowConfiguration(
-  menuOpen: boolean,
-  confirmingExit = false,
-  anchor: LauncherAnchor | null = null,
-  setAnchor?: (anchor: LauncherAnchor) => void,
+  { menuOpen, confirmingExit, anchor, setAnchor, setConfirmSide }: {
+    menuOpen: boolean;
+    confirmingExit: boolean;
+    anchor: LauncherAnchor | null;
+    setAnchor: (anchor: LauncherAnchor) => void;
+    setConfirmSide: (side: "left" | "right") => void;
+  },
+  operationId: number,
 ) {
   if (!isTauri() || launcherUserDragging()) return;
   const run = ++launcherConfigureRun;
@@ -1658,31 +1683,35 @@ async function applyLauncherWindowConfiguration(
   const parking = launcherParkingSize();
   const appWindow = getCurrentWindow();
   try {
-    const monitor = await primaryMonitor();
+    const work = scaledWorkArea(await readLauncherMonitor());
+    const nextAnchor = anchor ?? (launcherWasPlaced ? await readWindowAnchor(work) : null);
     if (run !== launcherConfigureRun) return;
+    setConfirmSide(!nextAnchor || work.right - nextAnchor.right > (work.left + work.right) / 2 ? "left" : "right");
     await appWindow.setAlwaysOnTop(true);
     await appWindow.setSkipTaskbar(true);
     await appWindow.setResizable(false);
+    recordDiagnostic("resize-requested", { operationId, requested: { width, height } });
+    await beforeDiagnosticResize(operationId);
     await appWindow.setSize(new LogicalSize(width, height));
+    await recordActualLauncherGeometry(operationId);
     if (run !== launcherConfigureRun) return;
-    if (anchor || launcherWasPlaced) {
-      const nextAnchor = anchor ?? (await readWindowAnchor());
-      await positionLauncherFromAnchor(width, height, parking.width, parking.height, nextAnchor);
+    if (nextAnchor) {
+      await positionLauncherFromAnchor(width, height, parking.width, parking.height, nextAnchor, work);
       if (run !== launcherConfigureRun) return;
-      if (!confirmingExit) setAnchor?.(await readWindowAnchor());
-      return;
+      if (!confirmingExit) setAnchor(await readWindowAnchor(work));
     } else {
-      const work = monitor?.workArea;
-      if (!work) return;
-      await positionWindow(width, height, parking.width, parking.height);
+      await positionWindow(width, height, parking.width, parking.height, work);
       if (run !== launcherConfigureRun) return;
-      setAnchor?.(await readWindowAnchor());
+      setAnchor(await readWindowAnchor(work));
       launcherWasPlaced = true;
     }
   } finally {
     if (run === launcherConfigureRun) {
       window.setTimeout(() => {
-        if (run === launcherConfigureRun) launcherIsConfiguring = false;
+        if (run === launcherConfigureRun) {
+          launcherIsConfiguring = false;
+          scheduleDiagnosticSnapshot();
+        }
       }, 120);
     }
   }
@@ -1692,23 +1721,8 @@ function launcherParkingSize() {
   return { width: MENU_WIDTH, height: MENU_HEIGHT };
 }
 
-async function updateConfirmSide(setConfirmSide: (side: "left" | "right") => void) {
-  if (!isTauri()) return;
-  const monitor = await primaryMonitor();
-  if (!monitor) return;
-  const scale = monitor.scaleFactor || 1;
-  const position = await getCurrentWindow().outerPosition();
-  const size = await getCurrentWindow().outerSize();
-  const work = monitor.workArea;
-  const windowCenterX = position.x / scale + size.width / scale / 2;
-  const workCenterX = (work.position.x + work.size.width / 2) / scale;
-  setConfirmSide(windowCenterX > workCenterX ? "left" : "right");
-}
-
-async function readWindowAnchor(): Promise<LauncherAnchor> {
-  const monitor = await primaryMonitor();
-  if (!monitor) return { right: 16, bottom: 16 };
-  const work = scaledWorkArea(monitor);
+async function readWindowAnchor(work?: WorkArea): Promise<LauncherAnchor> {
+  work ??= scaledWorkArea(await readLauncherMonitor());
   const position = await getCurrentWindow().outerPosition();
   const size = await getCurrentWindow().outerSize();
   return launcherAnchorFromWindow(work, {
@@ -1728,12 +1742,11 @@ async function configureNoteWindow(noteId: string) {
   await appWindow.setSize(new LogicalSize(size.width, size.height));
 }
 
-async function configureUtilityWindow(width: number, height: number) {
+async function configureUtilityWindow() {
   if (!isTauri()) return;
   const appWindow = getCurrentWindow();
   await appWindow.setSkipTaskbar(false);
   await appWindow.setResizable(true);
-  await appWindow.setSize(new LogicalSize(width, height));
 }
 
 async function closeCurrentWindow() {
@@ -1746,50 +1759,20 @@ async function closeCurrentWindow() {
 }
 
 async function noteSpawnOrigin() {
-  if (!isTauri()) return { x: 160, y: 160 };
-  const monitor = await primaryMonitor();
-  const scale = monitor?.scaleFactor || 1;
-  const work = monitor?.workArea;
-  if (!work) return { x: 160, y: 160 };
-  const launcherPosition = await getCurrentWindow().outerPosition();
-  const launcherSize = await getCurrentWindow().outerSize();
-  const launcherCenter = {
-    x: launcherPosition.x / scale + launcherSize.width / scale / 2,
-    y: launcherPosition.y / scale + launcherSize.height / scale / 2,
-  };
-  const workLeft = work.position.x / scale;
-  const workTop = work.position.y / scale;
-  const workRight = (work.position.x + work.size.width) / scale;
-  const workBottom = (work.position.y + work.size.height) / scale;
-  const workCenter = {
-    x: (workLeft + workRight) / 2,
-    y: (workTop + workBottom) / 2,
-  };
-  const delta = {
-    x: workCenter.x - launcherCenter.x,
-    y: workCenter.y - launcherCenter.y,
-  };
-  const distance = Math.hypot(delta.x, delta.y) || 1;
-  const direction = { x: delta.x / distance, y: delta.y / distance };
-  const spacing = 126;
-  const x = launcherCenter.x + direction.x * spacing - DEFAULT_NOTE_SIZE / 2;
-  const y = launcherCenter.y + direction.y * spacing - DEFAULT_NOTE_SIZE / 2;
-  return {
-    x: clamp(x, workLeft + 16, workRight - DEFAULT_NOTE_SIZE - 16),
-    y: clamp(y, workTop + 16, workBottom - DEFAULT_NOTE_SIZE - 16),
-  };
+  return (await readSpawnContext())?.origin ?? { x: 160, y: 160 };
 }
 
-async function positionWindow(width: number, height: number, visualWidth = width, visualHeight = height) {
-  const monitor = await primaryMonitor();
-  if (!monitor) return;
+async function positionWindow(width: number, height: number, visualWidth: number, visualHeight: number, work: WorkArea) {
   const center = visualCenterForTopRight(
-    scaledWorkArea(monitor),
+    work,
     { width: visualWidth, height: visualHeight },
     LAUNCHER_SCREEN_MARGIN,
   );
   const position = windowPositionForVisualCenter(center, { width, height });
-  await getCurrentWindow().setPosition(new LogicalPosition(position.x, position.y));
+  const operationId = configureLauncherWindow.snapshot().operationId;
+  recordDiagnostic("position-requested", { operationId, requested: position });
+  await getCurrentWindow().setPosition(new PhysicalPosition(Math.round(position.x * work.scale), Math.round(position.y * work.scale)));
+  await recordActualLauncherGeometry(operationId, "position-completed");
 }
 
 async function positionLauncherFromAnchor(
@@ -1798,24 +1781,24 @@ async function positionLauncherFromAnchor(
   visualWidth: number,
   visualHeight: number,
   anchor: LauncherAnchor,
+  work: WorkArea,
 ) {
-  const monitor = await primaryMonitor();
-  if (!monitor) return;
   const center = visualCenterFromAnchor(
-    scaledWorkArea(monitor),
+    work,
     anchor,
     { width: visualWidth, height: visualHeight },
     LAUNCHER_SCREEN_MARGIN,
   );
   const position = windowPositionForVisualCenter(center, { width, height });
-  await getCurrentWindow().setPosition(new LogicalPosition(position.x, position.y));
+  const operationId = configureLauncherWindow.snapshot().operationId;
+  recordDiagnostic("position-requested", { operationId, requested: position });
+  await getCurrentWindow().setPosition(new PhysicalPosition(Math.round(position.x * work.scale), Math.round(position.y * work.scale)));
+  await recordActualLauncherGeometry(operationId, "position-completed");
 }
 
 async function clampCurrentLauncherToWorkArea(visualWidth: number, visualHeight: number, margin: number) {
   if (!isTauri()) return false;
-  const monitor = await primaryMonitor();
-  if (!monitor) return false;
-  const work = scaledWorkArea(monitor);
+  const work = scaledWorkArea(await readLauncherMonitor());
   const position = await getCurrentWindow().outerPosition();
   const size = await getCurrentWindow().outerSize();
   const windowRect = {
@@ -1827,7 +1810,10 @@ async function clampCurrentLauncherToWorkArea(visualWidth: number, visualHeight:
   const { dx, dy } = clampParkingDelta(work, parkingRect(windowRect, { width: visualWidth, height: visualHeight }), margin);
 
   if (Math.abs(dx) <= 0.5 && Math.abs(dy) <= 0.5) return false;
-  await getCurrentWindow().setPosition(new LogicalPosition(windowRect.x + dx, windowRect.y + dy));
+  const requested = { x: windowRect.x + dx, y: windowRect.y + dy };
+  recordDiagnostic("position-requested", { operationId: 0, clamping: true, requested });
+  await getCurrentWindow().setPosition(new PhysicalPosition(Math.round(requested.x * work.scale), Math.round(requested.y * work.scale)));
+  await recordActualLauncherGeometry(0, "position-completed");
   return true;
 }
 
@@ -1878,7 +1864,7 @@ async function popupAtCurrentWindowPoint(clientX: number, clientY: number, width
 
 async function openNoteWindow(
   id: string,
-  options: { visible?: boolean; focus?: boolean } = {},
+  options: { visible?: boolean; focus?: boolean; spawnScale?: number } = {},
 ) {
   if (!isTauri()) return;
   const visible = options.visible ?? true;
@@ -1891,17 +1877,15 @@ async function openNoteWindow(
   }
 
   const note = loadState().notes.find((item) => item.id === id);
-  const origin = await noteSpawnOrigin();
-  const x = note?.position?.x ?? origin.x;
-  const y = note?.position?.y ?? origin.y;
+  const { x, y } = note?.position ?? await noteSpawnOrigin();
 
   const size = note?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE };
 
   const webview = new WebviewWindow(noteLabel(id), {
     url: `index.html?role=note&id=${encodeURIComponent(id)}&autofocus=${focus ? "1" : "0"}`,
     title: "Simeioma Note",
-    x: Math.max(16, x),
-    y: Math.max(16, y),
+    x,
+    y,
     width: size.width,
     height: size.height,
     minWidth: 176,
@@ -1912,11 +1896,14 @@ async function openNoteWindow(
     skipTaskbar: true,
     resizable: true,
     shadow: false,
-    visible,
-    focus,
+    visible: false,
+    focus: false,
   });
 
-  await webview.once("tauri://created", () => undefined);
+  await waitForWindowCreated(webview);
+  await placeCreatedWindow(webview, { x, y }, size, options.spawnScale);
+  if (visible) await webview.show();
+  if (focus) await webview.setFocus();
   if (focus) void invoke("raise_control", { label: "main" });
 }
 
@@ -1953,85 +1940,74 @@ function startUtilityDrag(event: PointerEvent) {
   if (!isTauri()) return;
   const target = event.target as HTMLElement;
   if (target.closest("button, input, select, textarea")) return;
-  getCurrentWindow().startDragging();
+  void startObservedWindowDrag();
 }
 
 async function restoreAndFocusUtilityWindow(window: WebviewWindow) {
   await invoke("restore_utility_window", { label: window.label });
 }
 
-async function openSettingsWindow() {
-  if (!isTauri()) return;
-  const existing = await WebviewWindow.getByLabel("settings");
-  if (existing) {
-    await restoreAndFocusUtilityWindow(existing);
-    return;
-  }
+function openSettingsWindow() { return openUtilityWindow("settings"); }
+function openNotesListWindow() { return openUtilityWindow("notes-list"); }
 
-  const monitor = await primaryMonitor();
-  const scale = monitor?.scaleFactor || 1;
-  const work = monitor?.workArea;
-  const width = SETTINGS_WINDOW_WIDTH;
-  const height = SETTINGS_WINDOW_HEIGHT;
-  const x = work ? (work.position.x + work.size.width) / scale - width - 88 : 180;
-  const y = work ? (work.position.y + work.size.height) / scale - height - 88 : 140;
-
-  const webview = new WebviewWindow("settings", {
-    url: "index.html?role=settings",
-    title: "Simeioma Settings",
-    x: Math.max(16, x),
-    y: Math.max(16, y),
-    width,
-    height,
-    minWidth: UTILITY_WINDOW_MIN_WIDTH,
-    minHeight: UTILITY_WINDOW_MIN_HEIGHT,
-    decorations: false,
-    transparent: true,
-    alwaysOnTop: false,
-    skipTaskbar: false,
-    resizable: true,
-    shadow: false,
-    visible: true,
-  });
-
-  await webview.once("tauri://created", () => undefined);
+function openUtilityWindow(role: UtilityRole) {
+  // Serialize creation and recheck existence inside the queue, including tray requests.
+  const result = utilityCreationQueue.then(() => createUtilityWindow(role));
+  utilityCreationQueue = result.catch(() => undefined);
+  return result;
 }
 
-async function openNotesListWindow() {
+async function createUtilityWindow(role: UtilityRole) {
   if (!isTauri()) return;
-  const existing = await WebviewWindow.getByLabel("notes-list");
+  const existing = await WebviewWindow.getByLabel(role);
   if (existing) {
     await restoreAndFocusUtilityWindow(existing);
     return;
   }
-
-  const monitor = await primaryMonitor();
-  const scale = monitor?.scaleFactor || 1;
-  const work = monitor?.workArea;
-  const width = UTILITY_WINDOW_WIDTH;
-  const height = UTILITY_WINDOW_HEIGHT;
-  const x = work ? (work.position.x + work.size.width) / scale - width - 88 : 180;
-  const y = work ? (work.position.y + work.size.height) / scale - height - 88 : 140;
-
-  const webview = new WebviewWindow("notes-list", {
-    url: "index.html?role=list",
-    title: "Simeioma Notes",
-    x: Math.max(16, x),
-    y: Math.max(16, y),
-    width,
-    height,
-    minWidth: UTILITY_WINDOW_MIN_WIDTH,
-    minHeight: UTILITY_WINDOW_MIN_HEIGHT,
+  await configureLauncherWindow.whenIdle();
+  const context = await readSpawnContext();
+  if (!context) return;
+  const desktop = { x: context.work.left, y: context.work.top,
+    width: context.work.right - context.work.left, height: context.work.bottom - context.work.top };
+  const notes: WindowRect[] = [];
+  const utilities: Partial<Record<UtilityRole, WindowRect>> = {};
+  for (const window of await getAllWebviewWindows()) {
+    if (window.label === "settings" || window.label === "notes-list") {
+      // Keep an existing utility fixed even when minimized; opening its sibling must not reserve its space twice.
+      utilities[window.label] = await windowRectInWorkArea(window, context.work);
+    } else if (window.label.startsWith("note-") && await window.isVisible() && !await window.isMinimized()) {
+      const rect = await windowRectInWorkArea(window, context.work);
+      if (rectsOverlap(rect, desktop)) notes.push(rect);
+    }
+  }
+  const plan = planUtilityWindows({ work: context.work, launcher: context.launcher, notes,
+    reservedNote: { ...context.origin, width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE }, existing: utilities });
+  if (!plan) {
+    recordDiagnostic("utility-placement-unavailable", { roleCode: role === "settings" ? 0 : 1 });
+    await showMessage("There is not enough free space for this view without covering another Simeioma window. Move or resize a window, then try again.", { title: "Simeioma", kind: "info" });
+    return;
+  }
+  recordDiagnostic("utility-placement", { roleCode: role === "settings" ? 0 : 1,
+    modeCode: plan.mode === "row" ? 0 : plan.mode === "reflow" ? 1 : 2, requested: plan[role] });
+  const webview = new WebviewWindow(role, {
+    url: role === "settings" ? "index.html?role=settings" : "index.html?role=list",
+    title: role === "settings" ? "Simeioma Settings" : "Simeioma Notes",
+    ...plan[role],
+    minWidth: UTILITY_MIN_SIZE.width,
+    minHeight: UTILITY_MIN_SIZE.height,
     decorations: false,
     transparent: true,
     alwaysOnTop: false,
     skipTaskbar: false,
     resizable: true,
     shadow: false,
-    visible: true,
+    visible: false,
+    focus: false,
   });
-
-  await webview.once("tauri://created", () => undefined);
+  await waitForWindowCreated(webview);
+  await placeCreatedWindow(webview, plan[role], plan[role], context.work.scale);
+  await webview.show();
+  await webview.setFocus();
 }
 
 function focusFirstLine() {

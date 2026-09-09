@@ -9,6 +9,8 @@
     "build": "vite build",
     "build:desktop": "tauri build",
     "build:desktop:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
+    "build:desktop:debug": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Debug -NoBundle",
+    "test:diagnostics:native": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-diagnostics.ps1",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "test:watch": "vitest",

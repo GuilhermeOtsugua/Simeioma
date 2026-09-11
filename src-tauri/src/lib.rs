@@ -1,3 +1,5 @@
+#[cfg(any(windows, test))]
+mod clipboard_text;
 #[cfg(debug_assertions)]
 mod diagnostics_store;
 #[cfg(debug_assertions)]
@@ -301,32 +303,26 @@ fn read_clipboard_text_native() -> Result<String, String> {
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, GetClipboardData, OpenClipboard,
     };
-    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock, GlobalSize};
     use windows_sys::Win32::System::Ole::CF_UNICODETEXT;
 
     unsafe {
         if OpenClipboard(std::ptr::null_mut()) == 0 {
             return Err("Could not open clipboard.".to_string());
         }
+        struct OpenClipboardGuard;
+        impl Drop for OpenClipboardGuard { fn drop(&mut self) { unsafe { CloseClipboard(); } } }
+        let _clipboard = OpenClipboardGuard;
         let handle = GetClipboardData(CF_UNICODETEXT as u32);
-        if handle.is_null() {
-            CloseClipboard();
-            return Ok(String::new());
-        }
+        if handle.is_null() { return Ok(String::new()); }
+        let length = GlobalSize(handle);
+        if length == 0 || length > isize::MAX as usize { return Err("Invalid clipboard allocation.".into()); }
         let pointer = GlobalLock(handle);
-        if pointer.is_null() {
-            CloseClipboard();
-            return Err("Could not lock clipboard text.".to_string());
-        }
-        let mut length = 0usize;
-        let text_pointer = pointer as *const u16;
-        while *text_pointer.add(length) != 0 {
-            length += 1;
-        }
-        let text = String::from_utf16_lossy(std::slice::from_raw_parts(text_pointer, length));
-        GlobalUnlock(handle);
-        CloseClipboard();
-        Ok(text)
+        if pointer.is_null() { return Err("Could not lock clipboard text.".into()); }
+        struct LockedClipboardGuard(windows_sys::Win32::Foundation::HGLOBAL);
+        impl Drop for LockedClipboardGuard { fn drop(&mut self) { unsafe { GlobalUnlock(self.0); } } }
+        let _locked = LockedClipboardGuard(handle);
+        clipboard_text::decode(std::slice::from_raw_parts(pointer.cast::<u8>(), length)).map_err(str::to_string)
     }
 }
 

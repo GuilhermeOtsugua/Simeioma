@@ -1,8 +1,8 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { isTauri } from "@tauri-apps/api/core";
 import {
-  invokeObserved as invoke, diagnosticStorageKey, diagnosticRevisionKey, diagnosticChannelName,
-  diagnosticsEnabled, startDiagnostics, setLauncherDiagnosticReader, recordDiagnostic,
+  invokeObserved as invoke, diagnosticStorageKey,
+  startDiagnostics, setLauncherDiagnosticReader, recordDiagnostic,
   beforeDiagnosticResize, recordActualLauncherGeometry, scheduleDiagnosticSnapshot, startObservedWindowDrag,
 } from "./diagnostics";
 import { emitTo, listen } from "@tauri-apps/api/event";
@@ -22,14 +22,11 @@ import {
   NOTE_COLORS,
   NOTE_TITLE_HEIGHT,
   clearNotesFromState,
-  createInitialState as createModelInitialState,
   createNoteInState,
   isReminderDue,
   launcherPrimaryAction,
   markNoteViewed,
-  reminderNotes,
   removeNoteFromState,
-  unviewedReminderCount,
   unviewedReminderNotes,
   updateNotePosition,
   updateNoteSize,
@@ -68,12 +65,11 @@ import {
 import { createLauncherConfiguration } from "./launcherConfiguration";
 import { planUtilityWindows, rectsOverlap, SPAWN_SCREEN_MARGIN, UTILITY_MIN_SIZE, type UtilityRole } from "./spawnPlacement";
 import { readSpawnContext, readSpawnAnchor, readLauncherMonitor, windowRectInWorkArea, waitForWindowCreated, placeCreatedWindow } from "./windowSpawning";
-import { decodeState, encodeState } from "./stateCodec";
+import { loadState, updateState, transactState, stateChannel as channel } from "./persistence";
 import { RecoveryWindow } from "./RecoveryWindow";
 import "./App.css";
 
 const STORAGE_KEY = diagnosticStorageKey;
-const CHANNEL_NAME = diagnosticChannelName;
 const HOLD_TO_DRAG_MS = 0;
 const LAUNCHER_CANVAS_WIDTH = 64;
 const LAUNCHER_CANVAS_HEIGHT = 204;
@@ -83,7 +79,6 @@ const LAUNCHER_IDLE_CANVAS_WIDTH = 30;
 const LAUNCHER_IDLE_CANVAS_HEIGHT = 112;
 const LAUNCHER_SCREEN_MARGIN = SPAWN_SCREEN_MARGIN;
 
-const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(CHANNEL_NAME) : null;
 let launcherWasPlaced = false;
 let launcherIsConfiguring = false;
 let launcherConfigureRun = 0;
@@ -163,7 +158,7 @@ function LauncherWindow() {
     const interval = window.setInterval(() => {
       const latest = loadState();
       setState(latest);
-      maybeTriggerReminder(latest, setState, setNotice);
+      void maybeTriggerReminder(setState, setNotice).catch(() => {});
     }, 15000);
 
     if (isTauri()) {
@@ -239,17 +234,12 @@ function LauncherWindow() {
     const visibleNotes = await visibleNotesInState(current);
     const context = await readSpawnContext();
     const anchor = await readSpawnAnchor(visibleNotes.at(-1), context);
-    const result = createNoteInState(loadState(), {
-      id: createId(),
-      lineId: createId(),
-      now: new Date().toISOString(),
-      origin: context?.origin ?? { x: 160, y: 160 },
-      spawnAfter: anchor.note,
-      spawnBounds: anchor.bounds,
-    });
+    const result = await transactState(state => createNoteInState(state, {
+      id: createId(), lineId: createId(), now: new Date().toISOString(),
+      origin: context?.origin ?? { x: 160, y: 160 }, spawnAfter: anchor.note, spawnBounds: anchor.bounds,
+    }));
     if (!result.note) return;
-    saveState(result.state);
-    setState(result.state);
+    setState(loadState());
     await openNoteWindow(result.note.id, { spawnScale: anchor.scale });
   });
 
@@ -553,10 +543,7 @@ function SettingsWindow() {
   });
 
   const updateSettings = (patch: Partial<Settings>) => {
-    const latest = loadState();
-    const next = { ...latest, settings: { ...latest.settings, ...patch } };
-    saveState(next);
-    setState(next);
+    void updateState(state => ({ ...state, settings: { ...state.settings, ...patch } }), { setState }).catch(() => {});
   };
 
   return (
@@ -625,10 +612,7 @@ function NotesListWindow() {
   });
 
   const deleteNote = async (id: string) => {
-    const latest = loadState();
-    const next = removeNoteFromState(latest, id);
-    saveState(next);
-    setState(next);
+    await updateState(state => removeNoteFromState(state, id), { setState });
     const noteWindow = await WebviewWindow.getByLabel(noteLabel(id));
     await noteWindow?.close();
   };
@@ -636,9 +620,7 @@ function NotesListWindow() {
   const deleteAllNotes = async () => {
     setConfirmingDeleteAll(false);
     await hideAllNoteWindows();
-    const next = clearNotesFromState(loadState());
-    saveState(next);
-    setState(next);
+    await updateState(clearNotesFromState, { setState });
     await closeAllNoteWindows();
   };
 
@@ -712,8 +694,10 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
   const note = createMemo(() => state().notes.find((item) => item.id === props.noteId));
   const noteColor = createMemo(() => getColor(note()?.colorKey));
   const otherNotes = createMemo(() => state().notes.filter((item) => item.id !== props.noteId));
-  const storedBodyText = createMemo(() => note()?.lines.map((line) => line.text).join("\n") ?? "");
-  const storedRightText = createMemo(() => note()?.rightText ?? "");
+  const [bodyDraft, setBodyDraft] = createSignal<string>();
+  const [rightDraft, setRightDraft] = createSignal<string>();
+  const storedBodyText = createMemo(() => bodyDraft() ?? note()?.lines.map((line) => line.text).join("\n") ?? "");
+  const storedRightText = createMemo(() => rightDraft() ?? note()?.rightText ?? "");
   const mentions = createMemo(() => collectMentions(note(), otherNotes()));
   const itemLayoutIsTwoColumn = createMemo(() => note()?.layout === "two-column");
 
@@ -722,17 +706,12 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     const current = latest.notes.find((item) => item.id === props.noteId);
     const context = await readSpawnContext();
     const anchor = await readSpawnAnchor(current, context);
-    const result = createNoteInState(loadState(), {
-      id: createId(),
-      lineId: createId(),
-      now: new Date().toISOString(),
-      origin: context?.origin ?? current?.position ?? { x: 160, y: 160 },
-      spawnAfter: anchor.note,
-      spawnBounds: anchor.bounds,
-    });
+    const result = await transactState(state => createNoteInState(state, {
+      id: createId(), lineId: createId(), now: new Date().toISOString(),
+      origin: context?.origin ?? current?.position ?? { x: 160, y: 160 }, spawnAfter: anchor.note, spawnBounds: anchor.bounds,
+    }));
     if (!result.note) return;
-    saveState(result.state);
-    setState(result.state);
+    setState(loadState());
     await openNoteWindow(result.note.id, { spawnScale: anchor.scale });
   });
 
@@ -783,7 +762,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
         return;
       }
       await configureNoteWindow(props.noteId);
-      markCurrentNoteViewed(props.noteId, setState);
+      await markCurrentNoteViewed(props.noteId, setState);
       window.setTimeout(hydrateCanvas, 0);
       await emitTo("main", "simeioma:note-window-ready", { noteId: props.noteId });
     };
@@ -1001,35 +980,36 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
   });
 
   const patchNote = (patch: Partial<Note>) => {
-    updateNote(props.noteId, (item) => ({ ...item, ...patch, updatedAt: new Date().toISOString() }), { setState });
+    void updateNote(props.noteId, (item) => ({ ...item, ...patch, updatedAt: new Date().toISOString() }), { setState }).catch(() => {});
   };
 
   const deleteCurrentNote = async () => {
-    const next = removeNoteFromState(loadState(), props.noteId);
-    saveState(next);
-    setState(next);
+    await updateState(state => removeNoteFromState(state, props.noteId), { setState });
     await closeCurrentWindow();
   };
 
   const updateBodyText = (rawText: string) => {
     const current = note();
     if (!current) return;
-    persistNoteBody(props.noteId, current.lines[0]?.id ?? createId(), rawText);
+    setBodyDraft(rawText);
+    void persistNoteBody(props.noteId, current.lines[0]?.id ?? createId(), rawText).then(() => {
+      if (bodyDraft() === rawText) { setState(loadState()); setBodyDraft(undefined); }
+    }).catch(() => {}); // Preserve the visible draft on failure; persistence reports it.
   };
 
   const updateRightText = (rawText: string) => {
-    persistNoteRightText(props.noteId, rawText);
+    setRightDraft(rawText);
+    void persistNoteRightText(props.noteId, rawText).then(() => {
+      if (rightDraft() === rawText) { setState(loadState()); setRightDraft(undefined); }
+    }).catch(() => {});
   };
 
   const saveSketchStroke = (stroke: SketchStrokeRecord) => {
-    const current = note();
-    patchNote({ sketchStrokes: [...(current?.sketchStrokes ?? []), stroke] });
+    void updateNote(props.noteId, item => ({ ...item, sketchStrokes: [...(item.sketchStrokes ?? []), stroke], updatedAt: new Date().toISOString() }), { setState }).catch(() => {});
   };
 
   const syncAfterLineEdit = () => {
-    const latest = loadState();
-    saveState(latest);
-    setState(latest);
+    setState(loadState());
   };
 
   const activateEditorForPointer = (event: PointerEvent) => {
@@ -1465,46 +1445,9 @@ function NoteList(props: {
   );
 }
 
-function loadState(): AppState {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  return raw === null ? createInitialState() : decodeState(raw);
-}
-
-function saveState(state: AppState, options: { broadcast?: boolean } = {}) {
-  try {
-    localStorage.setItem(STORAGE_KEY, encodeState(state));
-  } catch (error) {
-    recordDiagnostic("storage-error");
-    throw error;
-  }
-  if (diagnosticsEnabled) {
-    // A diagnostic write counter, not a transactional/cross-window revision guarantee.
-    try {
-      const revision = (Number(localStorage.getItem(diagnosticRevisionKey)) || 0) + 1;
-      localStorage.setItem(diagnosticRevisionKey, String(revision));
-      recordDiagnostic("state-saved", { revision, noteCount: state.notes.length, broadcast: options.broadcast !== false });
-    } catch { recordDiagnostic("storage-error"); }
-  }
-  if (options.broadcast !== false) {
-    channel?.postMessage({ type: "state" });
-    if (isTauri()) void emitTo("notes-list", "simeioma:state-changed").catch(() => undefined);
-  }
-}
-
 function enqueueNoteCreation(create: () => Promise<void>) {
   noteCreationQueue = noteCreationQueue.then(create, create);
   return noteCreationQueue;
-}
-
-function updateState(
-  updater: (state: AppState) => AppState,
-  options: { broadcast?: boolean; setState?: (state: AppState) => void } = {},
-) {
-  const current = loadState();
-  const next = updater(current);
-  if (next !== current) saveState(next, { broadcast: options.broadcast });
-  options.setState?.(next);
-  return next;
 }
 
 function updateNote(
@@ -1522,7 +1465,7 @@ function updateNote(
 }
 
 function persistNoteBody(noteId: string, lineId: string, text: string) {
-  updateNote(
+  return updateNote(
     noteId,
     (note) => ({
       ...note,
@@ -1534,7 +1477,7 @@ function persistNoteBody(noteId: string, lineId: string, text: string) {
 }
 
 function persistNoteRightText(noteId: string, rightText: string) {
-  updateNote(
+  return updateNote(
     noteId,
     (note) => ({
       ...note,
@@ -1549,37 +1492,25 @@ async function ensureDefaultExportPath(setState: (state: AppState) => void) {
   if (!isTauri()) return;
   if (loadState().settings.exportPath) return;
   const exportPath = await documentDir();
-  updateState(
-    (state) => ({
+  await updateState(
+    (state) => state.settings.exportPath ? state : ({
       ...state,
-      settings: {
-        ...state.settings,
-        exportPath,
-        copyAfterSave: true,
-      },
+      settings: { ...state.settings, exportPath },
     }),
     { setState },
   );
 }
 
 function markCurrentNoteViewed(noteId: string, setState?: (state: AppState) => void) {
-  updateState((state) => markNoteViewed(state, noteId, new Date().toISOString()), { setState });
+  return updateState((state) => markNoteViewed(state, noteId, new Date().toISOString()), { setState });
 }
 
 function persistNotePosition(noteId: string, position: { x: number; y: number }, setState?: (state: AppState) => void) {
-  updateState((state) => updateNotePosition(state, noteId, position), { setState });
+  return updateState((state) => updateNotePosition(state, noteId, position), { setState });
 }
 
 function persistNoteSize(noteId: string, size: { width: number; height: number }, setState?: (state: AppState) => void) {
-  updateState((state) => updateNoteSize(state, noteId, size), { setState });
-}
-
-function createInitialState(): AppState {
-  return createModelInitialState(randomColorIndex());
-}
-
-function randomColorIndex() {
-  return Math.floor(Math.random() * NOTE_COLORS.length);
+  return updateState((state) => updateNoteSize(state, noteId, size), { setState });
 }
 
 function createId() {
@@ -2133,27 +2064,18 @@ function roundRect(
   context.fill();
 }
 
-function maybeTriggerReminder(
-  state: AppState,
+async function maybeTriggerReminder(
   setState: (state: AppState) => void,
   setNotice: (notice: ReminderNotice | null) => void,
 ) {
-  const settings = state.settings;
-  if (!settings.remindersEnabled) return;
-  const matches = reminderNotes(state.notes, settings.reminderTarget);
-  const unviewed = unviewedReminderNotes(state.notes, settings.reminderTarget);
-  const count = unviewedReminderCount(state.notes, settings.reminderTarget);
-  if (!matches.length || !unviewed.length || !count) return;
-  if (!isReminderDue(settings)) return;
-
-  const next = { ...state, settings: { ...settings, lastReminderAt: new Date().toISOString() } };
-  saveState(next);
-  setState(next);
-  setNotice({
-    title: "Reminder",
-    body: `${count} ${count === 1 ? "note" : "notes"} need attention`,
-    noteIds: unviewed.map((note) => note.id),
+  const result = await transactState(state => {
+    const unviewed = unviewedReminderNotes(state.notes, state.settings.reminderTarget);
+    if (!state.settings.remindersEnabled || !unviewed.length || !isReminderDue(state.settings)) return { state, notice: null };
+    return { state: { ...state, settings: { ...state.settings, lastReminderAt: new Date().toISOString() } },
+      notice: { title: "Reminder", body: `${unviewed.length} notes need attention`, noteIds: unviewed.map(note => note.id) } };
   });
+  setState(loadState());
+  if (result.notice) setNotice(result.notice);
 }
 
 function clamp(value: number, min: number, max: number) {

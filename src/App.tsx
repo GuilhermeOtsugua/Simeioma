@@ -1685,7 +1685,6 @@ async function applyLauncherWindowConfiguration(
   try {
     const work = scaledWorkArea(await readLauncherMonitor());
     const nextAnchor = anchor ?? (launcherWasPlaced ? await readWindowAnchor(work) : null);
-    if (run !== launcherConfigureRun) return;
     setConfirmSide(!nextAnchor || work.right - nextAnchor.right > (work.left + work.right) / 2 ? "left" : "right");
     await appWindow.setAlwaysOnTop(true);
     await appWindow.setSkipTaskbar(true);
@@ -1694,26 +1693,22 @@ async function applyLauncherWindowConfiguration(
     await beforeDiagnosticResize(operationId);
     await appWindow.setSize(new LogicalSize(width, height));
     await recordActualLauncherGeometry(operationId);
-    if (run !== launcherConfigureRun) return;
     if (nextAnchor) {
       await positionLauncherFromAnchor(width, height, parking.width, parking.height, nextAnchor, work);
-      if (run !== launcherConfigureRun) return;
       if (!confirmingExit) setAnchor(await readWindowAnchor(work));
     } else {
       await positionWindow(width, height, parking.width, parking.height, work);
-      if (run !== launcherConfigureRun) return;
       setAnchor(await readWindowAnchor(work));
       launcherWasPlaced = true;
     }
   } finally {
-    if (run === launcherConfigureRun) {
-      window.setTimeout(() => {
-        if (run === launcherConfigureRun) {
-          launcherIsConfiguring = false;
-          scheduleDiagnosticSnapshot();
-        }
-      }, 120);
-    }
+    // Transactions are serialized; only this delayed callback can overlap the next one.
+    window.setTimeout(() => {
+      if (run === launcherConfigureRun) {
+        launcherIsConfiguring = false;
+        scheduleDiagnosticSnapshot();
+      }
+    }, 120);
   }
 }
 

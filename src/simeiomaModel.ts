@@ -1,3 +1,4 @@
+import { hasOpenTasks } from "./noteContent";
 import { clampSpawnOrigin, rectFits, type SpawnBounds } from "./spawnPlacement";
 
 export type ReminderMode = "periodic" | "timeOfDay";
@@ -322,6 +323,3 @@ function parseTimeOfDay(value: string): [number | null, number | null] {
   return [hour, minute];
 }
 
-function hasOpenTasks(note: Note) {
-  return note.lines.some((line) => line.task && !line.crossed);
-}

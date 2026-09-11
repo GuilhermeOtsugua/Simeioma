@@ -1,4 +1,5 @@
 import { createEffect, onCleanup, onMount, type JSX } from "solid-js";
+import { sourceLines, taskLine } from "./noteContent";
 import {
   applyMarkdownEdit,
   markdownTokens,
@@ -40,7 +41,7 @@ type MarkdownEditorProps = {
 };
 
 type HistoryEntry = { value: string; selection: SourceSelection };
-type SourceLine = { from: number; to: number; text: string; index: number };
+type SourceLine = ReturnType<typeof sourceLines>[number];
 
 export function MarkdownEditor(props: MarkdownEditorProps) {
   let element!: HTMLDivElement;
@@ -93,8 +94,9 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     row.dataset.lineIndex = String(line.index);
 
     const active = activeLineIndexes.has(line.index);
-    if (active) {
-      appendSourceSegment(row, line.text, line.from);
+    if (active || line.fenced) {
+      if (line.fenced) appendText(row, line.text, line.from, line.to);
+      else appendSourceSegment(row, line.text, line.from);
       return row;
     }
 
@@ -105,16 +107,16 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       return row;
     }
 
-    const task = line.text.match(/^- \[([ xX])\]\s+(.*)$/);
+    const task = taskLine(line.text);
     if (task) {
       row.classList.add("is-task");
-      if (task[1].toLowerCase() === "x") row.classList.add("is-done");
+      if (task.checked) row.classList.add("is-done");
       const box = document.createElement("span");
       box.className = "markdown-editor-task-box";
       box.contentEditable = "false";
       box.setAttribute("aria-hidden", "true");
       row.append(box);
-      if (task[2]) appendSourceSegment(row, task[2], line.from + task[0].length - task[2].length);
+      if (task.text) appendSourceSegment(row, task.text, line.from + task.prefixLength);
       else appendText(row, "", line.to, line.to);
       return row;
     }
@@ -657,16 +659,6 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       }}
     />
   );
-}
-
-function sourceLines(value: string): SourceLine[] {
-  const lines = value.split("\n");
-  let from = 0;
-  return lines.map((text, index) => {
-    const line = { from, to: from + text.length, text, index };
-    from = line.to + 1;
-    return line;
-  });
 }
 
 function safeHref(href: string) {

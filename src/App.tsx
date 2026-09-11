@@ -66,6 +66,7 @@ import { createLauncherConfiguration } from "./launcherConfiguration";
 import { planUtilityWindows, rectsOverlap, SPAWN_SCREEN_MARGIN, UTILITY_MIN_SIZE, type UtilityRole } from "./spawnPlacement";
 import { readSpawnContext, readSpawnAnchor, readLauncherMonitor, windowRectInWorkArea, waitForWindowCreated, placeCreatedWindow } from "./windowSpawning";
 import { loadState, updateState, transactState, stateChannel as channel } from "./persistence";
+import { noteBody, hasOpenTasks } from "./noteContent";
 import { RecoveryWindow } from "./RecoveryWindow";
 import "./App.css";
 
@@ -696,7 +697,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
   const otherNotes = createMemo(() => state().notes.filter((item) => item.id !== props.noteId));
   const [bodyDraft, setBodyDraft] = createSignal<string>();
   const [rightDraft, setRightDraft] = createSignal<string>();
-  const storedBodyText = createMemo(() => bodyDraft() ?? note()?.lines.map((line) => line.text).join("\n") ?? "");
+  const storedBodyText = createMemo(() => bodyDraft() ?? (note() ? noteBody(note()!) : ""));
   const storedRightText = createMemo(() => rightDraft() ?? note()?.rightText ?? "");
   const mentions = createMemo(() => collectMentions(note(), otherNotes()));
   const itemLayoutIsTwoColumn = createMemo(() => note()?.layout === "two-column");
@@ -1390,7 +1391,7 @@ function NoteList(props: {
                 }}
               >
                 <span>{noteLabelText(note)}</span>
-                <small>{note.important ? "Important" : note.lines.some((line) => line.task && !line.crossed) ? "Open tasks" : "Note"}</small>
+                <small>{note.important ? "Important" : hasOpenTasks(note) ? "Open tasks" : "Note"}</small>
               </button>
             );
           }}
@@ -1936,12 +1937,7 @@ function collectMentions(note: Note | undefined, candidates: Note[]) {
 
 function noteToMarkdown(note: Note) {
   const title = note.title.trim() || noteLabelText(note);
-  const lines = note.lines.map((line) => {
-    const box = line.task ? `- [${line.crossed ? "x" : " "}] ` : "";
-    const text = line.crossed && !line.task ? `~~${line.text}~~` : line.text;
-    return `${box}${text}`;
-  });
-  const left = lines.join("\n");
+  const left = noteBody(note);
   if (note.layout === "two-column") {
     return `# ${title}\n\n## Left\n\n${left}\n\n## Right\n\n${note.rightText ?? ""}\n`;
   }

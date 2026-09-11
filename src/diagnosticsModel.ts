@@ -1,3 +1,4 @@
+import { openTaskCount } from "./noteContent";
 import type { AppState } from "./simeiomaModel";
 
 export type DiagnosticRect = { x: number; y: number; width: number; height: number };
@@ -47,6 +48,6 @@ export function summarizeDiagnosticState(state: AppState, revision: number) {
     revision,
     noteCount: state.notes.length,
     importantCount: state.notes.filter((note) => note.important).length,
-    taskCount: state.notes.reduce((count, note) => count + note.lines.filter((line) => line.task && !line.crossed).length, 0),
+    taskCount: state.notes.reduce((count, note) => count + openTaskCount(note), 0),
   };
 }

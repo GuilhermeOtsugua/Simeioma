@@ -17,7 +17,6 @@ import {
 import { WebviewWindow, getAllWebviewWindows } from "@tauri-apps/api/webviewWindow";
 import {
   DEFAULT_NOTE_SIZE,
-  DEFAULT_SETTINGS,
   MENU_HEIGHT,
   MENU_WIDTH,
   NOTE_COLORS,
@@ -28,7 +27,6 @@ import {
   isReminderDue,
   launcherPrimaryAction,
   markNoteViewed,
-  normalizeNoteColorKey,
   reminderNotes,
   removeNoteFromState,
   unviewedReminderCount,
@@ -70,6 +68,8 @@ import {
 import { createLauncherConfiguration } from "./launcherConfiguration";
 import { planUtilityWindows, rectsOverlap, SPAWN_SCREEN_MARGIN, UTILITY_MIN_SIZE, type UtilityRole } from "./spawnPlacement";
 import { readSpawnContext, readSpawnAnchor, readLauncherMonitor, windowRectInWorkArea, waitForWindowCreated, placeCreatedWindow } from "./windowSpawning";
+import { decodeState, encodeState } from "./stateCodec";
+import { RecoveryWindow } from "./RecoveryWindow";
 import "./App.css";
 
 const STORAGE_KEY = diagnosticStorageKey;
@@ -105,6 +105,7 @@ function App() {
     onCleanup(() => document.removeEventListener("contextmenu", suppressNativeContextMenu));
   });
 
+  try { loadState(); } catch { return <RecoveryWindow storageKey={STORAGE_KEY} />; }
   const params = new URLSearchParams(window.location.search);
   const role = params.get("role");
   const noteId = params.get("id");
@@ -1466,29 +1467,12 @@ function NoteList(props: {
 
 function loadState(): AppState {
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return createInitialState();
-  try {
-    const parsed = JSON.parse(raw) as Partial<AppState>;
-    return {
-      notes: (parsed.notes ?? []).map((note) => ({
-        ...note,
-        colorKey: normalizeNoteColorKey(note.colorKey),
-      })),
-      launcher: {
-        colorIndex: parsed.launcher?.colorIndex ?? randomColorIndex(),
-        corner: parsed.launcher?.corner ?? "bottom-right",
-      },
-      settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
-    };
-  } catch {
-    recordDiagnostic("storage-error");
-    return createInitialState();
-  }
+  return raw === null ? createInitialState() : decodeState(raw);
 }
 
 function saveState(state: AppState, options: { broadcast?: boolean } = {}) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, encodeState(state));
   } catch (error) {
     recordDiagnostic("storage-error");
     throw error;

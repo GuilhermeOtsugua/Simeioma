@@ -117,6 +117,10 @@ The smoke fixture also verifies a persistent non-dialog size mismatch, a deliber
 
 Spawn smoke checks also exercise repeated bounded notes, exact resized/off-screen source cloning through Ctrl+N, real tray/menu utility creation, minimized restore-bound reservation, reverse opening order, and compact utility size preservation. `smoke-result.json` includes the measured spawn rectangles and bottom limit. The runner deletes only the previous isolated result before launch and requires a fresh `passed: true` artifact in addition to process completion; Windows/Tauri may return zero even after `app.exit(1)`.
 
+The fixture additionally checks literal-source composition, undo/redo and composition cancellation in WebView2; a deliberately yielding mutation lock shared by two real WebViews; corrupt-session recovery without rewriting the original payload; recovery retry; and a real complete-content PNG export through the launcher. Its synthetic export directory (`smoke-exports` under the test identity's log directory) is replaced each run. The assertion IPC accepts only bounded numeric case IDs and booleans, and is rejected outside the guarded isolated fixture. These event-driven checks do not simulate a physical OS IME candidate/composition session.
+
+The frontend/native event-name contract has a static regression test. It caught and fixed rejection of utility-placement events at the native allowlist.
+
 The smoke environment switch is rejected unless both the exact test identity and clean-session mode are active. These smoke hooks are compiled out of release builds. Never use the isolated fixture executable as the normal manual-testing artifact.
 
 An opt-in local producer benchmark is available with `cargo test --manifest-path src-tauri/Cargo.toml --lib measure_recorder_producer -- --ignored --nocapture`. It measures 500 submissions, draining outside timed sections to avoid queue overflow. Local measurements before/after the background writer were 254/17 microseconds median and 502/25 microseconds p95. These are local samples, not universal latency guarantees or CI performance thresholds.

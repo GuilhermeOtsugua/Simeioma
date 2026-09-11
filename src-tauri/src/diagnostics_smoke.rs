@@ -1,4 +1,5 @@
 //! Opt-in native integration fixture. Never runs against the regular app identity.
+mod behavior;
 use serde_json::{json, Value};
 use std::time::Duration;
 use tauri::Manager;
@@ -44,7 +45,7 @@ pub fn start(app: &tauri::App) {
             let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::write(dir.join("smoke-result.json"), json!({
                 "passed": success, "failure": result.as_ref().err(), "spawn": result.as_ref().ok(),
-                "checks": ["frontend-bootstrap", "expanded-confirmation", "clipping-captured", "resize-failure-recovery", "delayed-resize", "missing-response-marked", "ipc-redaction", "reopened-window-identity", "settled-window-snapshot", "stale-instance-rejection", "writer-health", "persistent-geometry-mismatch", "queue-stall-watchdog", "saved-note-versus-native-geometry", "bounded-note-spawn", "edge-clone-geometry", "utility-placement", "tray-settings-placement", "minimized-utility-reservation", "compact-utility-size-preserved", "utility-opening-order", "editor-composition-source-integrity"]
+                "checks": ["frontend-bootstrap", "expanded-confirmation", "clipping-captured", "resize-failure-recovery", "delayed-resize", "missing-response-marked", "ipc-redaction", "reopened-window-identity", "settled-window-snapshot", "stale-instance-rejection", "writer-health", "persistent-geometry-mismatch", "queue-stall-watchdog", "saved-note-versus-native-geometry", "bounded-note-spawn", "edge-clone-geometry", "utility-placement", "tray-settings-placement", "minimized-utility-reservation", "compact-utility-size-preserved", "utility-opening-order", "editor-composition-source-integrity", "editor-undo-redo-cancel", "cross-webview-mutation-lock", "corrupt-session-recovery", "complete-content-png-export"]
             }).to_string());
         }
         eprintln!("Native diagnostics smoke test passed: {success}");
@@ -125,6 +126,8 @@ async fn run(app: &tauri::AppHandle) -> Result<Value, String> {
     {
         return Err("IPC redaction failed".into());
     }
+    main.set_focus().map_err(|_| "launcher focus failed")?;
+    wait(150).await;
     evaluate("document.querySelector('.launcher-strip').dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, button: 2}));")?;
     expect_width(app, 64).await?;
     super::diagnostics::smoke_stall_next_resize(app)?;
@@ -362,21 +365,7 @@ async fn check_spawn_placement(app: &tauri::AppHandle) -> Result<Value, String> 
     main.eval("document.querySelector('.launcher-strip').click();").map_err(|_| "note creation evaluation failed")?;
     let source = expect_notes(app, 1).await?.remove(0);
     expect_window(app, source.label()).await?;
-    source.eval(r#"(async () => {
-      const editor = document.querySelector('[aria-label="Note line"]');
-      editor.focus();
-      const text = '# Heading\n**bold**\nedit';
-      editor.dispatchEvent(new InputEvent('beforeinput', {inputType: 'insertText', data: text, bubbles: true, cancelable: true}));
-      editor.dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true}));
-      editor.textContent = text + '日本語';
-      editor.dispatchEvent(new InputEvent('input', {inputType: 'insertCompositionText', bubbles: true}));
-      editor.dispatchEvent(new CompositionEvent('compositionend', {data: '日本語', bubbles: true}));
-      await navigator.locks.request('simeioma:debug-clean:v1:mutation', () => {});
-      const state = JSON.parse(localStorage.getItem('simeioma:debug-clean:v1'));
-      const id = new URLSearchParams(location.search).get('id');
-      await window.__TAURI_INTERNALS__.invoke('smoke_assert', {caseId: 0, passed: state.notes.find(n => n.id === id).lines[0].text === text + '日本語'});
-    })();"#).map_err(|_| "composition fixture evaluation failed")?;
-    expect_assertion(0).await?;
+    behavior::run(app, &main, &source).await?;
     source.set_size(tauri::LogicalSize::new(320.0, 240.0)).map_err(|_| "source resize failed")?;
     source.set_position(tauri::LogicalPosition::new(left + 80.0, note_bottom - 250.0)).map_err(|_| "source placement failed")?;
     let anchor = logical_rect(&source)?;

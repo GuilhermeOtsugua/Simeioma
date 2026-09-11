@@ -145,12 +145,22 @@ Run deterministic checks before considering a change complete:
 bun run test
 bun run typecheck
 bun run build
+cargo test --manifest-path src-tauri/Cargo.toml --lib
 cargo check --manifest-path src-tauri/Cargo.toml
+cargo check --release --manifest-path src-tauri/Cargo.toml
 ```
 
 These cover model behavior, frontend compilation, and Rust/Tauri compilation.
 They do not authoritatively prove native window, focus, drag, layout, or WebView
 selection behavior. Manual native QA is the source of truth for those contracts.
+
+The Windows CI workflow runs these gates on pushes and pull requests. Native
+checks remain separate: `bun run test:diagnostics:native`, or an explicit manual
+workflow dispatch on a trusted interactive runner labeled `simeioma-desktop`.
+No desktop runner is provisioned automatically.
+
+See [application boundaries and export fidelity](docs/ARCHITECTURE.md) and the
+[debt remediation / manual QA checklist](docs/DEBT_REMEDIATION.md).
 
 For a fresh release artifact, test at least:
 
@@ -158,7 +168,7 @@ For a fresh release artifact, test at least:
 - Markdown selection, strikethrough, Cut, and resize behavior;
 - notes-list scrolling, contextual actions, individual deletion, and Delete all;
 - saved-note persistence across a release restart and the intentional clean reset
-  in dev mode.
+  in explicitly selected clean-session mode.
 
 See [`docs/TESTING_AND_BEHAVIOR_PLAN.md`](docs/TESTING_AND_BEHAVIOR_PLAN.md) for
 the broader behavior ledger and manual test plan.

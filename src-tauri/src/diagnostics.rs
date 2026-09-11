@@ -164,6 +164,8 @@ fn allowed_event(event: &str) -> bool {
             | "drag-timeout"
             | "drag-superseded"
             | "drag-observation-failed"
+            | "utility-placement"
+            | "utility-placement-unavailable"
             | "queue-stalled"
             | "configuration-queued"
             | "configuration-started"

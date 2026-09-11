@@ -1,4 +1,5 @@
 import { createEffect, onCleanup, onMount, type JSX } from "solid-js";
+import { createEditorHistory, type HistoryEntry } from "./editorHistory";
 import { commitComposition } from "./composition";
 import { sourceLines, taskLine } from "./noteContent";
 import {
@@ -41,7 +42,6 @@ type MarkdownEditorProps = {
   ref?: (handle: MarkdownEditorHandle) => void;
 };
 
-type HistoryEntry = { value: string; selection: SourceSelection };
 type SourceLine = ReturnType<typeof sourceLines>[number];
 
 export function MarkdownEditor(props: MarkdownEditorProps) {
@@ -59,8 +59,8 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   let renderedSelection = "";
   let activeTokenStarts = new Set<number>();
   let activeLineIndexes = new Set<number>();
-  let undoStack: HistoryEntry[] = [];
-  let redoStack: HistoryEntry[] = [];
+  const history = createEditorHistory();
+  let lastTypingEnd = -1;
   let lastEmittedValue = source;
 
   const lines = () => sourceLines(source);
@@ -342,8 +342,12 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   const edit = (nextValue: string, nextSelection: SourceSelection, addHistory = true) => {
     if (nextValue === source && nextSelection.start === selection.start && nextSelection.end === selection.end) return;
     if (addHistory) {
-      undoStack.push({ value: source, selection });
-      redoStack = [];
+      const typing = !compositionBase && selection.start === selection.end && nextSelection.start === nextSelection.end
+        && nextValue.length > source.length && nextValue.length <= source.length + 2
+        && nextSelection.end === selection.end + nextValue.length - source.length;
+      if (!typing || selection.start !== lastTypingEnd) history.breakGroup();
+      history.record({ value: source, selection }, typing ? "typing" : undefined);
+      lastTypingEnd = typing ? nextSelection.end : -1;
     }
     source = nextValue;
     selection = nextSelection;
@@ -422,18 +426,17 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
     const base = compositionBase;
     const result = commitComposition(base.value, base.selection, compositionText);
     composing = false;
-    compositionBase = undefined;
     source = base.value;
     selection = base.selection;
     renderedSource = "";
     if (result && result.value !== base.value) edit(result.value, result.selection);
     else render(); // Cancellation or an invalid DOM change preserves the original and history.
+    compositionBase = undefined;
   }; 
 
   const undo = () => {
-    const previous = undoStack.pop();
+    const previous = history.undo({ value: source, selection });
     if (!previous) return;
-    redoStack.push({ value: source, selection });
     source = previous.value;
     selection = previous.selection;
     activeTokenStarts = new Set();
@@ -444,9 +447,8 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   };
 
   const redo = () => {
-    const next = redoStack.pop();
+    const next = history.redo({ value: source, selection });
     if (!next) return;
-    undoStack.push({ value: source, selection });
     source = next.value;
     selection = next.selection;
     activeTokenStarts = new Set();
@@ -573,6 +575,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
       edit(result.value, result.selection);
     },
     setValue: (value) => {
+      if (value !== source) history.clear();
       if (value === source) return;
       source = value;
       selection = { start: Math.min(selection.start, value.length), end: Math.min(selection.end, value.length) };
@@ -598,6 +601,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   createEffect(() => {
     const externalValue = props.value;
     if (externalValue === source || externalValue === lastEmittedValue) return;
+    history.clear();
     source = externalValue;
     selection = { start: Math.min(selection.start, source.length), end: Math.min(selection.end, source.length) };
     renderedSource = "";

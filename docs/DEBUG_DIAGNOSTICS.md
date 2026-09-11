@@ -119,6 +119,8 @@ Spawn smoke checks also exercise repeated bounded notes, exact resized/off-scree
 
 The fixture additionally checks literal-source composition, undo/redo and composition cancellation in WebView2; a deliberately yielding mutation lock shared by two real WebViews; corrupt-session recovery without rewriting the original payload; recovery retry; and a real complete-content PNG export through the launcher. Its synthetic export directory (`smoke-exports` under the test identity's log directory) is replaced each run. The assertion IPC accepts only bounded numeric case IDs and booleans, and is rejected outside the guarded isolated fixture. These event-driven checks do not simulate a physical OS IME candidate/composition session.
 
+The drawing-continuity fixture holds the shared mutation lock for 1.5 seconds, completes a stroke through the real canvas handlers, and samples canvas ink across animation frames before the save can finish. It also starts a second stroke and triggers a state-channel refresh, verifying that active ink is not overwritten. Synthetic pointer capture is stubbed only for the fixture's non-OS pointer ID; rendering, persistence and state notifications remain real. This test failed before the pending-stroke fix.
+
 The frontend/native event-name contract has a static regression test. It caught and fixed rejection of utility-placement events at the native allowlist.
 
 The smoke environment switch is rejected unless both the exact test identity and clean-session mode are active. These smoke hooks are compiled out of release builds. Never use the isolated fixture executable as the normal manual-testing artifact.

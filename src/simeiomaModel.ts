@@ -8,11 +8,11 @@ export type NoteLayout = "single" | "two-column";
 export type SketchRenderingMode = "legacy" | "simeioma-adaptive" | "tomodachi-pixel";
 export type SketchBrushSize = "thin" | "default" | "thick";
 export type SketchPointRecord = { x: number; y: number; time?: number };
-export type SketchStrokeRecord =
+export type SketchStrokeRecord = { id?: string } & (
   | { type: "freehand"; points: SketchPointRecord[]; renderingMode?: SketchRenderingMode; brushSize?: SketchBrushSize }
   | { type: "line"; start: SketchPointRecord; end: SketchPointRecord }
   | { type: "circle"; center: SketchPointRecord; radius: number }
-  | { type: "rect"; x: number; y: number; width: number; height: number };
+  | { type: "rect"; x: number; y: number; width: number; height: number });
 
 export type NoteLine = {
   id: string;

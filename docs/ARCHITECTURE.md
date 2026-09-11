@@ -14,6 +14,7 @@
 | `lifetime.ts`, `utilityLifecycle.ts` | Teardown, late subscription ownership, focus observation and guarded initialization |
 | `exportModel.ts`, `exports.ts`, `clipboard.ts` | Complete-content export layout, encoding/save workflow and clipboard boundary |
 | `MarkdownEditor.tsx`, `composition.ts`, `editorHistory.ts` | Editor DOM, range-scoped composition and bounded undo/redo |
+| `sketch.ts`, `sketchDraft.ts` | Canvas rendering and pending ink reconciliation; stable stroke IDs prevent duplicate replay while saves settle |
 | `reminders.ts` | Reminder eligibility, state mutation and window reveal |
 
 Views may use services; services must not import views. `architecture.test.ts` enforces this direction for state/native services.
@@ -21,6 +22,8 @@ Views may use services; services must not import views. `architecture.test.ts` e
 Persistent mutations must go through `updateState`/`transactState`, not raw storage writes. Their Web Lock covers the read as well as the write. Post-commit notifications are not part of the transaction. Export snapshots fence pending mutations through the same owner. Recovery exports the untouched original JSON; it does not silently reset it.
 
 Native window tests remain distinct from browser tests. In particular, preserve hidden creation followed by rounded physical positioning, exact clones of deliberately edge-placed notes, full launcher transaction serialization and existing utility placement. These are verified platform contracts, not redundant defensive branches.
+
+Drawing redraws combine persisted and pending strokes, and never replace an active stroke. Save acknowledgement retires only the submitted pending records. Failed saves retain visible ink for retry on the next stroke; closing the window still loses unsaved drafts. Bitmap load callbacks are invalidated when a newer render or stroke starts, so stale image loads cannot overwrite current ink.
 
 ## Export contract
 

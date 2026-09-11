@@ -45,6 +45,45 @@ pub(super) async fn run(app: &tauri::AppHandle, main: &tauri::WebviewWindow, sou
     main.eval("window.__TAURI_INTERNALS__.invoke('smoke_assert', {caseId: 3, passed: localStorage.getItem('simeioma:smoke-counter') === '2'}); localStorage.removeItem('simeioma:smoke-counter');").map_err(|_| "lock assertion evaluation failed")?;
     expect_assertion(3).await?;
 
+    // Hold persistence while the real canvas finishes one stroke and starts another.
+    main.eval(r#"navigator.locks.request('simeioma:debug-clean:v1:mutation', async () => {
+      await window.__TAURI_INTERNALS__.invoke('smoke_assert', {caseId: 7, passed: true});
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    });"#).map_err(|_| "sketch lock evaluation failed")?;
+    expect_assertion(7).await?;
+    source.eval(r#"(async () => {
+      const canvas = document.querySelector('.sketch-canvas');
+      // Synthetic pointer IDs cannot acquire OS capture; the drawing handlers remain real.
+      const capture = canvas.setPointerCapture;
+      canvas.setPointerCapture = () => {};
+      const rect = canvas.getBoundingClientRect();
+      const pointer = (type, x, y, buttons) => canvas.dispatchEvent(new PointerEvent(type, {
+        bubbles: true, button: 0, buttons, pointerId: 42, clientX: rect.left + x, clientY: rect.top + y
+      }));
+      const pixels = () => {
+        const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+        let count = 0; for (let i = 3; i < data.length; i += 4) if (data[i]) count++;
+        return count;
+      };
+      const frame = () => new Promise(resolve => requestAnimationFrame(resolve));
+      pointer('pointerdown', 20, 20, 1); pointer('pointermove', 80, 20, 1); pointer('pointerup', 90, 20, 0);
+      let passed = pixels() > 0;
+      for (let i = 0; i < 5; i++) { await frame(); passed = passed && pixels() > 0; }
+      pointer('pointerdown', 20, 50, 1); pointer('pointermove', 80, 50, 1);
+      const activePixels = pixels();
+      const channel = new BroadcastChannel('simeioma-debug-clean-sync'); channel.postMessage({type: 'state'});
+      for (let i = 0; i < 5; i++) { await frame(); passed = passed && pixels() >= activePixels; }
+      pointer('pointerup', 90, 50, 0);
+      await navigator.locks.request('simeioma:debug-clean:v1:mutation', () => {});
+      await frame(); await frame();
+      const state = JSON.parse(localStorage.getItem('simeioma:debug-clean:v1'));
+      const strokes = state.notes.find(n => n.id === new URLSearchParams(location.search).get('id')).sketchStrokes;
+      passed = passed && strokes?.length === 2 && pixels() > 0;
+      canvas.setPointerCapture = capture; channel.close();
+      await window.__TAURI_INTERNALS__.invoke('smoke_assert', {caseId: 8, passed});
+    })();"#).map_err(|_| "sketch continuity evaluation failed")?;
+    expect_assertion(8).await?;
+
     // This corruption is confined to the clean fixture identity. No normal session is touched.
     source.eval("localStorage.setItem('simeioma:smoke-backup', localStorage.getItem('simeioma:debug-clean:v1')); localStorage.setItem('simeioma:debug-clean:v1', '{invalid fixture'); location.reload();").map_err(|_| "recovery fixture setup failed")?;
     wait(700).await;

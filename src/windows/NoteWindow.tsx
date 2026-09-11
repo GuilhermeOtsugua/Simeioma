@@ -1,3 +1,4 @@
+import { createSketchDraft, mergeSketchStrokes } from "../sketchDraft";
 import { createLifetime } from "../lifetime";
 import { recordDiagnostic, invokeObserved as invoke, startObservedWindowDrag } from "../diagnostics";
 import { createSignal, createMemo, onMount, onCleanup, createEffect, Show, For } from "solid-js";
@@ -29,6 +30,8 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
   let bodyEditor: MarkdownEditorHandle | undefined;
   let rightEditor: MarkdownEditorHandle | undefined;
   let activeStroke: SketchStroke | null = null;
+  const sketchDraft = createSketchDraft();
+  let canvasRenderEpoch = 0;
   let canvasRedrawFrame: number | undefined;
   let noteDragTimer: number | undefined;
   let notePointerDownAt: { x: number; y: number } | null = null;
@@ -73,14 +76,23 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
       return;
     }
 
-    if (combo === "Ctrl + Z" && current?.sketchStrokes?.length && document.activeElement !== bodyEditor?.element && document.activeElement !== rightEditor?.element) {
+    const visibleStrokes = sketchDraft.visible(current?.sketchStrokes ?? []);
+    if (combo === "Ctrl + Z" && !activeStroke && visibleStrokes.length && document.activeElement !== bodyEditor?.element && document.activeElement !== rightEditor?.element) {
       event.preventDefault();
-      patchNote({ sketchStrokes: current.sketchStrokes.slice(0, -1), sketchData: undefined });
+      const last = visibleStrokes.at(-1)!;
+      if (last.id) sketchDraft.discard(last.id);
+      void updateNote(props.noteId, item => ({ ...item,
+        sketchStrokes: last.id ? (item.sketchStrokes ?? []).filter(stroke => stroke.id !== last.id) : (item.sketchStrokes ?? []).slice(0, -1),
+        sketchData: undefined, updatedAt: new Date().toISOString(),
+      }), { setState: life.guard(setState) }).catch(() => {});
+      scheduleCanvasHydration();
       return;
     }
 
-    if (combo === "Ctrl + Shift + Z" && (current?.sketchStrokes?.length || current?.sketchData)) {
+    if (combo === "Ctrl + Shift + Z" && !activeStroke && (visibleStrokes.length || current?.sketchData)) {
       event.preventDefault();
+      sketchDraft.clear();
+      scheduleCanvasHydration();
       patchNote({ sketchStrokes: [], sketchData: undefined });
       return;
     }
@@ -340,7 +352,15 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
   };
 
   const saveSketchStroke = (stroke: SketchStrokeRecord) => {
-    void updateNote(props.noteId, item => ({ ...item, sketchStrokes: [...(item.sketchStrokes ?? []), stroke], updatedAt: new Date().toISOString() }), { setState }).catch(() => {});
+    sketchDraft.add(stroke, createId());
+    const submitted = sketchDraft.pending();
+    void updateNote(props.noteId, item => ({ ...item,
+      sketchStrokes: mergeSketchStrokes(item.sketchStrokes ?? [], submitted),
+      updatedAt: new Date().toISOString(),
+    }), { setState: life.guard(setState) }).then(() => {
+      sketchDraft.acknowledge(submitted);
+      if (life.active) scheduleCanvasHydration();
+    }).catch(() => {}); // Keep failed ink visible; the next stroke retries it with the same IDs.
   };
 
   const syncAfterLineEdit = () => {
@@ -569,6 +589,7 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
                   return;
                 }
                 const settings = loadState().settings;
+                canvasRenderEpoch += 1; // Invalidate pending bitmap loads before capturing live ink.
                 activeStroke = startSketch(event, canvasRef, settings.sketchRenderingMode, settings.sketchBrushSize);
               }}
               onPointerMove={(event) => {
@@ -613,17 +634,17 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
 
   function hydrateCanvas() {
     const current = note();
-    if (!canvasRef) return;
+    const epoch = ++canvasRenderEpoch;
+    if (!canvasRef || activeStroke || !life.active) return;
     const context = prepareSketchCanvas(canvasRef);
     if (!context) return;
-    clearSketchCanvas(context);
     const renderStrokes = () => {
-      for (const stroke of current?.sketchStrokes ?? []) renderSketchRecord(context, stroke);
+      for (const stroke of sketchDraft.visible(current?.sketchStrokes ?? [])) renderSketchRecord(context, stroke);
     };
     if (current?.sketchData) {
       const image = new Image();
       image.onload = () => {
-        if (!life.active) return;
+        if (!life.active || activeStroke || epoch !== canvasRenderEpoch) return;
         clearSketchCanvas(context);
         context.drawImage(image, 0, 0, context.canvas.width, context.canvas.height);
         renderStrokes();
@@ -631,6 +652,7 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
       image.src = current.sketchData;
       return;
     }
+    clearSketchCanvas(context);
     renderStrokes();
   }
 

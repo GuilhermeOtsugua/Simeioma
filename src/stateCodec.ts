@@ -6,10 +6,10 @@ const sample = point.extend({ time: z.number().finite().optional() });
 const brush = z.enum(["thin", "default", "thick"]);
 const rendering = z.enum(["legacy", "simeioma-adaptive", "tomodachi-pixel"]);
 const stroke = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("freehand"), points: z.array(sample), renderingMode: rendering.optional(), brushSize: brush.optional() }).passthrough(),
-  z.object({ type: z.literal("line"), start: point, end: point }).passthrough(),
-  z.object({ type: z.literal("circle"), center: point, radius: z.number().finite().nonnegative() }).passthrough(),
-  z.object({ type: z.literal("rect"), x: z.number().finite(), y: z.number().finite(), width: z.number().finite(), height: z.number().finite() }).passthrough(),
+  z.object({ id: z.string().min(1).optional(), type: z.literal("freehand"), points: z.array(sample), renderingMode: rendering.optional(), brushSize: brush.optional() }).passthrough(),
+  z.object({ id: z.string().min(1).optional(), type: z.literal("line"), start: point, end: point }).passthrough(),
+  z.object({ id: z.string().min(1).optional(), type: z.literal("circle"), center: point, radius: z.number().finite().nonnegative() }).passthrough(),
+  z.object({ id: z.string().min(1).optional(), type: z.literal("rect"), x: z.number().finite(), y: z.number().finite(), width: z.number().finite(), height: z.number().finite() }).passthrough(),
 ]);
 const date = z.string().refine(value => Number.isFinite(Date.parse(value)), "Invalid date");
 const settings = z.object({

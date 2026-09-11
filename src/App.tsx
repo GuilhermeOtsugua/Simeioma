@@ -1950,8 +1950,6 @@ function shouldBlockNoteDrag(event: PointerEvent) {
   if (target.closest(".note-titlebar")) return Boolean(target.closest("button, .color-popover, .note-context-menu"));
   if (target.closest("textarea, input, .note-body-editor")) return true;
 
-  if (target.closest(".note-body-preview")) return true;
-
   return false;
 }
 

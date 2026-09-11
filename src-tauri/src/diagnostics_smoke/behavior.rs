@@ -83,6 +83,7 @@ pub(super) async fn run(app: &tauri::AppHandle, main: &tauri::WebviewWindow, sou
       await window.__TAURI_INTERNALS__.invoke('smoke_assert', {caseId: 8, passed});
     })();"#).map_err(|_| "sketch continuity evaluation failed")?;
     expect_assertion(8).await?;
+    super::vector_resize::run(source).await?;
 
     // This corruption is confined to the clean fixture identity. No normal session is touched.
     source.eval("localStorage.setItem('simeioma:smoke-backup', localStorage.getItem('simeioma:debug-clean:v1')); localStorage.setItem('simeioma:debug-clean:v1', '{invalid fixture'); location.reload();").map_err(|_| "recovery fixture setup failed")?;

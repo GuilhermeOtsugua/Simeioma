@@ -1,10 +1,12 @@
+import { createResizeQueue } from "../resizeQueue";
+import { createSketchScene } from "../sketchScene";
 import { createSketchDraft, mergeSketchStrokes } from "../sketchDraft";
 import { createLifetime } from "../lifetime";
 import { recordDiagnostic, invokeObserved as invoke, startObservedWindowDrag } from "../diagnostics";
 import { createSignal, createMemo, onMount, onCleanup, createEffect, Show, For } from "solid-js";
 import { loadState, transactState, stateChannel as channel, updateState } from "../persistence";
 import { type MarkdownEditorHandle, MarkdownEditor } from "../MarkdownEditor";
-import { type SketchStroke, startSketch, coalescedPointerEvents, drawSketch, finishSketch, prepareSketchCanvas, clearSketchCanvas, renderSketchRecord } from "../sketch";
+import { type SketchStroke, startSketch, coalescedPointerEvents, drawSketch, finishSketch, prepareSketchCanvas, clearSketchCanvas } from "../sketch";
 import { getColor, createNoteInState, type Note, removeNoteFromState, type SketchStrokeRecord, NOTE_TITLE_HEIGHT, DEFAULT_NOTE_SIZE, NOTE_COLORS } from "../simeiomaModel";
 import { noteBody } from "../noteContent";
 import { enqueueNoteCreation, openNoteWindow, hideAllNoteWindows, configureNoteWindow } from "../noteWindows";
@@ -31,6 +33,10 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
   let rightEditor: MarkdownEditorHandle | undefined;
   let activeStroke: SketchStroke | null = null;
   const sketchDraft = createSketchDraft();
+  const sketchScene = createSketchScene();
+  const resizeQueue = createResizeQueue(size => getCurrentWindow().setSize(new LogicalSize(size.width, size.height)));
+  let resizeFinalizing = false;
+  let sketchBitmap: string | undefined;
   let canvasRenderEpoch = 0;
   let canvasRedrawFrame: number | undefined;
   let noteDragTimer: number | undefined;
@@ -81,6 +87,7 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
       event.preventDefault();
       const last = visibleStrokes.at(-1)!;
       if (last.id) sketchDraft.discard(last.id);
+      refreshSketchScene();
       void updateNote(props.noteId, item => ({ ...item,
         sketchStrokes: last.id ? (item.sketchStrokes ?? []).filter(stroke => stroke.id !== last.id) : (item.sketchStrokes ?? []).slice(0, -1),
         sketchData: undefined, updatedAt: new Date().toISOString(),
@@ -92,7 +99,7 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     if (combo === "Ctrl + Shift + Z" && !activeStroke && (visibleStrokes.length || current?.sketchData)) {
       event.preventDefault();
       sketchDraft.clear();
-      scheduleCanvasHydration();
+      refreshSketchScene();
       patchNote({ sketchStrokes: [], sketchData: undefined });
       return;
     }
@@ -163,8 +170,9 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
       life.own(getCurrentWindow().onResized(life.guard(({ payload }) => {
         scheduleCanvasHydration();
         window.clearTimeout(sizeSaveTimer);
+        if (resizingNote || resizeFinalizing) return;
         sizeSaveTimer = window.setTimeout(() => {
-          if (life.active) life.after(getCurrentWindow().scaleFactor(), scale =>
+          if (life.active && !resizingNote && !resizeFinalizing) life.after(getCurrentWindow().scaleFactor(), scale =>
             persistNoteSize(props.noteId, { width: payload.width / scale, height: payload.height / scale }, life.guard(setState)));
         }, 80);
       })));
@@ -193,6 +201,7 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
       canvasResizeObserver?.disconnect();
       window.clearTimeout(moveSaveTimer);
       window.clearTimeout(sizeSaveTimer);
+      resizeQueue.dispose();
       life.dispose();
     });
   });
@@ -278,13 +287,14 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
 
   const startNoteResize = async (event: PointerEvent) => {
     const resizeHandle = event.currentTarget;
-    if (!isTauri() || event.button !== 0 || !(resizeHandle instanceof HTMLElement)) return;
+    if (!isTauri() || event.button !== 0 || !(resizeHandle instanceof HTMLElement) || resizeFinalizing) return;
     event.preventDefault();
     event.stopPropagation();
     resizingNote = true;
     resizeHandle.setPointerCapture(event.pointerId);
     const size = await getCurrentWindow().outerSize();
     const scale = await getCurrentWindow().scaleFactor();
+    if (!resizingNote || !life.active) return;
     resizeStart = {
       x: event.clientX,
       y: event.clientY,
@@ -293,32 +303,31 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     };
   };
 
-  const resizeNote = async (event: PointerEvent) => {
+  const resizeNote = (event: PointerEvent) => {
     if (!resizeStart || !resizingNote) return;
     const width = Math.max(176, resizeStart.width + event.clientX - resizeStart.x);
     const height = Math.max(176, resizeStart.height + event.clientY - resizeStart.y);
-    await getCurrentWindow().setSize(new LogicalSize(width, height));
+    resizeQueue.request({ width, height });
   };
 
-  const stopNoteResize = async () => {
+  const stopNoteResize = async (event: PointerEvent) => {
     if (!resizingNote) return;
+    if (event.type === "pointerup") resizeNote(event);
     resizingNote = false;
     resizeStart = null;
     if (!isTauri()) return;
-    const size = await getCurrentWindow().outerSize();
-    const scale = await getCurrentWindow().scaleFactor();
-    persistNoteSize(
-      props.noteId,
-      { width: size.width / scale, height: size.height / scale },
-      setState,
-    );
+    resizeFinalizing = true;
+    try {
+      await resizeQueue.finish();
+      if (!life.active) return;
+      const size = await getCurrentWindow().outerSize();
+      const scale = await getCurrentWindow().scaleFactor();
+      if (life.active) await persistNoteSize(props.noteId, { width: size.width / scale, height: size.height / scale }, life.guard(setState));
+    } catch { recordDiagnostic("native-command-failed"); }
+    finally { resizeFinalizing = false; }
   };
 
-  createEffect(() => {
-    note()?.sketchData;
-    note()?.sketchStrokes;
-    hydrateCanvas();
-  });
+  createEffect(refreshSketchScene);
 
   createEffect(() => {
     if (!note() && isTauri()) {
@@ -353,13 +362,14 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
 
   const saveSketchStroke = (stroke: SketchStrokeRecord) => {
     sketchDraft.add(stroke, createId());
+    refreshSketchScene();
     const submitted = sketchDraft.pending();
     void updateNote(props.noteId, item => ({ ...item,
       sketchStrokes: mergeSketchStrokes(item.sketchStrokes ?? [], submitted),
       updatedAt: new Date().toISOString(),
     }), { setState: life.guard(setState) }).then(() => {
       sketchDraft.acknowledge(submitted);
-      if (life.active) scheduleCanvasHydration();
+      if (life.active) refreshSketchScene();
     }).catch(() => {}); // Keep failed ink visible; the next stroke retries it with the same IDs.
   };
 
@@ -632,6 +642,15 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     </Show>
   );
 
+  function refreshSketchScene() {
+    const current = note();
+    const changed = sketchScene.setStrokes(sketchDraft.visible(current?.sketchStrokes ?? []));
+    if (changed || sketchBitmap !== current?.sketchData) {
+      sketchBitmap = current?.sketchData;
+      scheduleCanvasHydration();
+    }
+  }
+
   function hydrateCanvas() {
     const current = note();
     const epoch = ++canvasRenderEpoch;
@@ -639,7 +658,7 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     const context = prepareSketchCanvas(canvasRef);
     if (!context) return;
     const renderStrokes = () => {
-      for (const stroke of sketchDraft.visible(current?.sketchStrokes ?? [])) renderSketchRecord(context, stroke);
+      sketchScene.draw(context);
     };
     if (current?.sketchData) {
       const image = new Image();
@@ -657,7 +676,7 @@ export function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
   }
 
   function scheduleCanvasHydration() {
-    if (canvasRedrawFrame !== undefined) window.cancelAnimationFrame(canvasRedrawFrame);
+    if (canvasRedrawFrame !== undefined || !life.active) return;
     canvasRedrawFrame = window.requestAnimationFrame(() => {
       canvasRedrawFrame = undefined;
       if (!activeStroke) hydrateCanvas();

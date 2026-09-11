@@ -30,6 +30,7 @@ struct Inner {
     exporting: bool,
     injection: Injection,
     smoke_stall_once: bool,
+    smoke_phase: Option<&'static str>,
 }
 
 #[derive(Default)]
@@ -76,6 +77,7 @@ pub fn setup(app: &tauri::App) {
             exporting: false,
             injection: Injection::default(),
             smoke_stall_once: false,
+            smoke_phase: None,
         }),
         AtomicU64::new(0),
     ));
@@ -315,9 +317,10 @@ pub async fn debug_record(
             inner.anomalies.pop_front();
         }
         let window_alias = inner.store.alias(label);
+        let fixture_phase = inner.smoke_phase;
         inner
             .anomalies
-            .push_back(json!({"window": window_alias, "instance": instance_id, "event": event, "frontend": clean, "native": native}));
+            .push_back(json!({"window": window_alias, "instance": instance_id, "event": event, "frontend": clean, "native": native, "fixturePhase": fixture_phase}));
     }
     Ok(())
 }
@@ -336,11 +339,26 @@ pub fn smoke_stall_next_resize(app: &tauri::AppHandle) -> Result<(), String> {
     {
         return Err("smoke stall requires isolated fixture".into());
     }
-    app.state::<Diagnostics>()
-        .0
-        .lock()
-        .map_err(|_| "diagnostics unavailable")?
-        .smoke_stall_once = true;
+    let state = app.state::<Diagnostics>();
+    let mut inner = state.0.lock().map_err(|_| "diagnostics unavailable")?;
+    inner.smoke_stall_once = true;
+    inner.smoke_phase = Some("stalled-confirmation-resize");
+    inner.store.record("main", "smoke-confirmation-stall", json!({"delayMs": 6500}));
+    Ok(())
+}
+
+// Native fixture provenance only; no IPC command can annotate or excuse a real anomaly.
+pub(super) fn smoke_confirmation_bounds(app: &tauri::AppHandle, narrowed: bool) -> Result<(), String> {
+    if app.config().identifier != "com.otsugua.simeioma.diagnosticstest"
+        || std::env::var("SIMEIOMA_DEBUG_SMOKE_TEST").as_deref() != Ok("1")
+        || std::env::var("SIMEIOMA_DEBUG_SESSION").as_deref() != Ok("clean") {
+        return Err("confirmation fixture requires isolated session".into());
+    }
+    let state = app.state::<Diagnostics>();
+    let mut inner = state.0.lock().map_err(|_| "diagnostics unavailable")?;
+    inner.smoke_phase = narrowed.then_some("forced-confirmation-bounds");
+    inner.store.record("main", if narrowed { "smoke-confirmation-narrowed" } else { "smoke-confirmation-restored" },
+        json!({"requested": {"width": if narrowed { 64 } else { 360 }, "height": 204}}));
     Ok(())
 }
 

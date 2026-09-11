@@ -250,11 +250,11 @@ function renderFreehand(context: CanvasRenderingContext2D, points: SketchSample[
   context.stroke();
 }
 
-function renderPixelStroke(context: CanvasRenderingContext2D, points: SketchPoint[], brushSize: SketchBrushSize) {
+export function renderPixelStroke(context: CanvasRenderingContext2D, points: SketchPoint[], brushSize: SketchBrushSize, pixelRatio = canvasPixelRatio(context.canvas)) {
   context.save();
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.fillStyle = "rgb(35, 31, 25)";
-  const dabSize = Math.max(1, Math.round(sketchBrushWidth(brushSize) * canvasPixelRatio(context.canvas)));
+  const dabSize = Math.max(1, Math.round(sketchBrushWidth(brushSize) * pixelRatio));
   drawPixelDab(context, toCanvasPoint(context.canvas, points[0]), dabSize);
   for (let index = 1; index < points.length; index += 1) {
     const previous = toCanvasPoint(context.canvas, points[index - 1]);

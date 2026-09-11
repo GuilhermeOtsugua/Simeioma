@@ -1,5 +1,6 @@
 //! Opt-in native integration fixture. Never runs against the regular app identity.
 mod behavior;
+mod vector_resize;
 use serde_json::{json, Value};
 use std::time::Duration;
 use tauri::Manager;
@@ -7,12 +8,13 @@ use tauri::Manager;
 static ASSERTIONS: std::sync::Mutex<std::collections::BTreeMap<u8, bool>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 #[tauri::command]
-pub fn smoke_assert(app: tauri::AppHandle, case_id: u8, passed: bool) -> Result<(), String> {
+pub fn smoke_assert(app: tauri::AppHandle, case_id: u8, passed: bool, metrics: Option<[u32; 4]>) -> Result<(), String> {
     if app.config().identifier != "com.otsugua.simeioma.diagnosticstest"
         || std::env::var("SIMEIOMA_DEBUG_SMOKE_TEST").as_deref() != Ok("1")
         || std::env::var("SIMEIOMA_DEBUG_SESSION").as_deref() != Ok("clean") || case_id > 15 {
         return Err("Not an isolated fixture".into());
     }
+    if !passed { if let Some(metrics) = metrics { eprintln!("Native assertion {case_id} metrics (actual width/height, expected width/height): {metrics:?}"); } }
     ASSERTIONS.lock().map_err(|_| "fixture unavailable")?.insert(case_id, passed);
     Ok(())
 }
@@ -45,7 +47,7 @@ pub fn start(app: &tauri::App) {
             let _ = std::fs::create_dir_all(&dir);
             let _ = std::fs::write(dir.join("smoke-result.json"), json!({
                 "passed": success, "failure": result.as_ref().err(), "spawn": result.as_ref().ok(),
-                "checks": ["frontend-bootstrap", "expanded-confirmation", "clipping-captured", "resize-failure-recovery", "delayed-resize", "missing-response-marked", "ipc-redaction", "reopened-window-identity", "settled-window-snapshot", "stale-instance-rejection", "writer-health", "persistent-geometry-mismatch", "queue-stall-watchdog", "saved-note-versus-native-geometry", "bounded-note-spawn", "edge-clone-geometry", "utility-placement", "tray-settings-placement", "minimized-utility-reservation", "compact-utility-size-preserved", "utility-opening-order", "editor-composition-source-integrity", "editor-undo-redo-cancel", "cross-webview-mutation-lock", "corrupt-session-recovery", "complete-content-png-export", "sketch-pending-save-continuity", "sketch-active-stroke-refresh"]
+                "checks": ["frontend-bootstrap", "expanded-confirmation", "clipping-captured", "resize-failure-recovery", "delayed-resize", "missing-response-marked", "ipc-redaction", "reopened-window-identity", "settled-window-snapshot", "stale-instance-rejection", "writer-health", "persistent-geometry-mismatch", "queue-stall-watchdog", "saved-note-versus-native-geometry", "bounded-note-spawn", "edge-clone-geometry", "utility-placement", "tray-settings-placement", "minimized-utility-reservation", "compact-utility-size-preserved", "utility-opening-order", "editor-composition-source-integrity", "editor-undo-redo-cancel", "cross-webview-mutation-lock", "corrupt-session-recovery", "complete-content-png-export", "sketch-pending-save-continuity", "sketch-active-stroke-refresh", "cached-vectors-live-resize", "latest-resize-persisted", "confirmation-fixture-provenance"]
             }).to_string());
         }
         eprintln!("Native diagnostics smoke test passed: {success}");
@@ -136,7 +138,7 @@ async fn run(app: &tauri::AppHandle) -> Result<Value, String> {
     let stalled = bundle(app).await?;
     if !stalled["anomalies"]
         .as_array()
-        .is_some_and(|items| items.iter().any(|a| a["event"] == "queue-stalled"))
+        .is_some_and(|items| items.iter().any(|a| a["event"] == "queue-stalled" && a["fixturePhase"] == "stalled-confirmation-resize"))
     {
         return Err("stalled queue was not captured".into());
     }
@@ -145,7 +147,9 @@ async fn run(app: &tauri::AppHandle) -> Result<Value, String> {
         return Err("expanded dialog is clipped".into());
     }
 
+    super::diagnostics::smoke_confirmation_bounds(app, false)?;
     // Recreate the exact native bounds responsible for the original two-pixel sliver.
+    super::diagnostics::smoke_confirmation_bounds(app, true)?;
     main.set_size(tauri::LogicalSize::new(64.0, 204.0))
         .map_err(|_| "smoke native resize failed")?;
     wait(350).await;
@@ -155,6 +159,7 @@ async fn run(app: &tauri::AppHandle) -> Result<Value, String> {
             items.iter().any(|a| {
                 a["frontend"]["viewport"]["width"] == 64
                     && a["frontend"]["dialog"]["clipped"] == true
+                    && a["fixturePhase"] == "forced-confirmation-bounds"
             })
         })
     {
@@ -162,9 +167,13 @@ async fn run(app: &tauri::AppHandle) -> Result<Value, String> {
     }
     main.set_size(tauri::LogicalSize::new(360.0, 204.0))
         .map_err(|_| "smoke native restoration failed")?;
-    expect_width(app, 360).await?;
+    let restored = expect_width(app, 360).await?;
+    if restored["frontend"]["main"]["data"]["dialog"]["clipped"] != false {
+        return Err("restored confirmation remained clipped".into());
+    }
+    super::diagnostics::smoke_confirmation_bounds(app, false)?;
 
-    evaluate("document.querySelector('.exit-confirmation button:last-child').click();")?;
+    evaluate("document.querySelector('.exit-confirmation button:last-child').click(); document.querySelector('.launcher-strip').dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, button: 2}));")?;
     expect_width(app, 64).await?;
     super::diagnostics::tray_action(app, "debug-fail");
     evaluate("document.querySelector('[aria-label=\"Close Simeioma\"]').click();")?;
@@ -177,7 +186,7 @@ async fn run(app: &tauri::AppHandle) -> Result<Value, String> {
     }) {
         return Err("injected failure was not recorded".into());
     }
-    evaluate("document.querySelector('.exit-confirmation button:last-child').click();")?;
+    evaluate("document.querySelector('.exit-confirmation button:last-child').click(); document.querySelector('.launcher-strip').dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, cancelable: true, button: 2}));")?;
     expect_width(app, 64).await?;
     super::diagnostics::tray_action(app, "debug-delay");
     evaluate("document.querySelector('[aria-label=\"Close Simeioma\"]').click();")?;

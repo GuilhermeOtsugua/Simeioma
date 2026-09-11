@@ -14,7 +14,8 @@
 | `lifetime.ts`, `utilityLifecycle.ts` | Teardown, late subscription ownership, focus observation and guarded initialization |
 | `exportModel.ts`, `exports.ts`, `clipboard.ts` | Complete-content export layout, encoding/save workflow and clipboard boundary |
 | `MarkdownEditor.tsx`, `composition.ts`, `editorHistory.ts` | Editor DOM, range-scoped composition and bounded undo/redo |
-| `sketch.ts`, `sketchDraft.ts` | Canvas rendering and pending ink reconciliation; stable stroke IDs prevent duplicate replay while saves settle |
+| `sketch.ts`, `sketchDraft.ts`, `sketchScene.ts` | Live ink, pending stroke reconciliation and cached vector geometry; unchanged strokes are not smoothed/rebuilt on resize |
+| `resizeQueue.ts` | Frame-coalesced, latest-size native requests, one request in flight, and final-size persistence fencing |
 | `reminders.ts` | Reminder eligibility, state mutation and window reveal |
 
 Views may use services; services must not import views. `architecture.test.ts` enforces this direction for state/native services.
@@ -24,6 +25,14 @@ Persistent mutations must go through `updateState`/`transactState`, not raw stor
 Native window tests remain distinct from browser tests. In particular, preserve hidden creation followed by rounded physical positioning, exact clones of deliberately edge-placed notes, full launcher transaction serialization and existing utility placement. These are verified platform contracts, not redundant defensive branches.
 
 Drawing redraws combine persisted and pending strokes, and never replace an active stroke. Save acknowledgement retires only the submitted pending records. Failed saves retain visible ink for retry on the next stroke; closing the window still loses unsaved drafts. Bitmap load callbacks are invalidated when a newer render or stroke starts, so stale image loads cannot overwrite current ink.
+
+## Live drawing resize
+
+The note scene caches normalized `Path2D` geometry for ordinary vector strokes and smoothed samples for pixel strokes. Each displayed size gets a vector repaint; paths are transformed to the current backing dimensions before stroking, preserving brush width under non-uniform resizing. There is no bitmap preview or final-quality snap. Pixel mode retains its exact size-dependent dab placement, so that rasterization work still happens during resizing.
+
+Only content changes update the scene cache; geometry-only state reloads do not trigger another paint. Resize sources share one pending animation frame. The custom resize handle coalesces pointer updates and allows only one native size request in flight, including the final pointer-up position before saving bounds. Debounced geometry saves are suppressed during that gesture.
+
+The native fixture checks 200 strokes (16,000 input points) at three window widths, observing live path painting without rebuilding vector commands. It also checks a 60-move resize burst reaches and saves the final pointer-up size with at most two native resize events. These are correctness/work-reduction checks, not a frame-rate guarantee for a user's drawing-heavy note. Physical drag feel and mixed-DPI fidelity remain manual QA.
 
 ## Export contract
 

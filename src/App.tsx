@@ -31,7 +31,6 @@ import {
   updateNotePosition,
   updateNoteSize,
   type AppState,
-  type ExportFormat,
   type Note,
   type ReminderNotice,
   type Settings,
@@ -69,6 +68,8 @@ import { loadState, updateState, transactState, stateChannel as channel } from "
 import { observeUtilityFocus } from "./utilityLifecycle";
 import { createLifetime } from "./lifetime";
 import { noteBody, hasOpenTasks } from "./noteContent";
+import { exportSession, exportNote, copyText, reportExportFailure } from "./exports";
+import { noteLabelText, slug } from "./noteLabels";
 import { RecoveryWindow } from "./RecoveryWindow";
 import "./App.css";
 
@@ -238,18 +239,7 @@ function LauncherWindow() {
     await openNoteWindow(result.note.id, { spawnScale: anchor.scale });
   });
 
-  const exportAll = async (format = state().settings.exportFormat) => {
-    const latest = loadState();
-    const filename = `simeioma-notes-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.${format}`;
-    if (format === "png" || format === "jpeg") {
-      const bytes = await renderNotesImage(latest.notes, format);
-      await saveBinaryExport(latest.settings, filename, bytes, format);
-      return;
-    }
-
-    const contents = format === "txt" ? notesToText(latest.notes) : notesToMarkdown(latest.notes);
-    await saveTextExport(latest.settings, filename, contents);
-  };
+  const exportAll = () => exportSession().catch(reportExportFailure);
 
   const matchingNoticeNotes = createMemo(() =>
     notice() ? state().notes.filter((note) => notice()!.noteIds.includes(note.id)) : [],
@@ -1364,7 +1354,7 @@ function NoteList(props: {
               <button
                 type="button"
                 onClick={() => {
-                  copyText(noteToMarkdown(action().note));
+                  void exportNote(action().note.id, true).catch(reportExportFailure);
                   setActionNote(null);
                 }}
               >
@@ -1373,7 +1363,7 @@ function NoteList(props: {
               <button
                 type="button"
                 onClick={() => {
-                  saveTextExport(loadState().settings, `${noteLabelText(action().note)}.md`, noteToMarkdown(action().note));
+                  void exportNote(action().note.id).catch(reportExportFailure);
                   setActionNote(null);
                 }}
               >
@@ -1427,7 +1417,7 @@ function persistNoteBody(noteId: string, lineId: string, text: string) {
       updatedAt: new Date().toISOString(),
       lines: [{ id: note.lines[0]?.id ?? lineId, text, task: false, crossed: false }],
     }),
-    { broadcast: false },
+    { broadcast: true },
   );
 }
 
@@ -1439,7 +1429,7 @@ function persistNoteRightText(noteId: string, rightText: string) {
       rightText,
       updatedAt: new Date().toISOString(),
     }),
-    { broadcast: false },
+    { broadcast: true },
   );
 }
 
@@ -1516,22 +1506,6 @@ async function noteWindowStatesInState(state: AppState) {
 async function visibleNotesInState(state: AppState): Promise<Note[]> {
   const windowStates = await noteWindowStatesInState(state);
   return windowStates.filter(({ visible }) => visible).map(({ note }) => note);
-}
-
-function noteLabelText(note: Note) {
-  const title = note.title.trim();
-  if (title) return title;
-  const body = note.lines.map((line) => line.text).join(" ").trim();
-  if (body) return slug(body).slice(0, 34) || "note";
-  return new Date(note.createdAt).toLocaleString();
-}
-
-function slug(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-");
 }
 
 async function applyLauncherWindowConfiguration(
@@ -1884,15 +1858,6 @@ function collectMentions(note: Note | undefined, candidates: Note[]) {
   return candidates.filter((candidate) => tokens.includes(slug(noteLabelText(candidate)).toLowerCase()));
 }
 
-function noteToMarkdown(note: Note) {
-  const title = note.title.trim() || noteLabelText(note);
-  const left = noteBody(note);
-  if (note.layout === "two-column") {
-    return `# ${title}\n\n## Left\n\n${left}\n\n## Right\n\n${note.rightText ?? ""}\n`;
-  }
-  return `# ${title}\n\n${left}\n`;
-}
-
 function shouldBlockNoteDrag(event: PointerEvent) {
   const target = event.target as HTMLElement;
   if (target.closest("button, select, .color-popover, .note-context-menu, .mention-row, .note-resize-handle")) return true;
@@ -1900,111 +1865,6 @@ function shouldBlockNoteDrag(event: PointerEvent) {
   if (target.closest("textarea, input, .note-body-editor")) return true;
 
   return false;
-}
-
-function notesToMarkdown(notes: Note[]) {
-  return notes.map(noteToMarkdown).join("\n---\n\n");
-}
-
-function notesToText(notes: Note[]) {
-  return notes
-    .map((note) => {
-      const lines = note.lines.map((line) => `${line.crossed ? "[done] " : ""}${line.text}`);
-      const left = lines.join("\n");
-      if (note.layout === "two-column") {
-        return `${noteLabelText(note)}\nLeft:\n${left}\n\nRight:\n${note.rightText ?? ""}`;
-      }
-      return `${noteLabelText(note)}\n${left}`;
-    })
-    .join("\n\n---\n\n");
-}
-
-async function saveTextExport(settings: Settings, filename: string, contents: string) {
-  if (settings.copyAfterSave) await copyText(contents);
-  if (settings.exportPath && isTauri()) {
-    await invoke("save_text_file", { directory: settings.exportPath, filename, contents });
-    return;
-  }
-  downloadBytes(filename, new TextEncoder().encode(contents), "text/plain");
-}
-
-async function saveBinaryExport(settings: Settings, filename: string, bytes: Uint8Array, format: ExportFormat) {
-  if (settings.exportPath && isTauri()) {
-    await invoke("save_binary_file", { directory: settings.exportPath, filename, bytes: Array.from(bytes) });
-    return;
-  }
-  downloadBytes(filename, bytes, format === "jpeg" ? "image/jpeg" : "image/png");
-}
-
-async function copyText(value: string) {
-  if (isTauri()) {
-    await invoke("write_clipboard_text", { text: value });
-    return;
-  }
-  await navigator.clipboard?.writeText(value);
-}
-
-function downloadBytes(filename: string, bytes: Uint8Array, type: string) {
-  const blob = new Blob([bytes], { type });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-async function renderNotesImage(notes: Note[], format: ExportFormat) {
-  const width = 720;
-  const noteHeight = 180;
-  const padding = 32;
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = Math.max(240, notes.length * (noteHeight + 16) + padding * 2);
-  const context = canvas.getContext("2d");
-  if (!context) return new Uint8Array();
-
-  context.fillStyle = "#f7f2df";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.font = "18px Segoe UI, sans-serif";
-
-  notes.forEach((note, index) => {
-    const color = getColor(note.colorKey);
-    const y = padding + index * (noteHeight + 16);
-    roundRect(context, padding, y, width - padding * 2, noteHeight, 18, color.bg);
-    context.fillStyle = color.ink;
-    context.font = "600 20px Segoe UI, sans-serif";
-    context.fillText(noteLabelText(note), padding + 20, y + 38);
-    context.font = "15px Segoe UI, sans-serif";
-    note.lines.slice(0, 6).forEach((line, lineIndex) => {
-      context.fillText(`${line.task ? (line.crossed ? "[x] " : "[ ] ") : ""}${line.text}`, padding + 20, y + 72 + lineIndex * 20);
-    });
-  });
-
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, format === "jpeg" ? "image/jpeg" : "image/png", 0.92),
-  );
-  return blob ? new Uint8Array(await blob.arrayBuffer()) : new Uint8Array();
-}
-
-function roundRect(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-  fill: string,
-) {
-  context.beginPath();
-  context.moveTo(x + radius, y);
-  context.arcTo(x + width, y, x + width, y + height, radius);
-  context.arcTo(x + width, y + height, x, y + height, radius);
-  context.arcTo(x, y + height, x, y, radius);
-  context.arcTo(x, y, x + width, y, radius);
-  context.closePath();
-  context.fillStyle = fill;
-  context.fill();
 }
 
 async function maybeTriggerReminder(

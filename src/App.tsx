@@ -66,6 +66,8 @@ import { createLauncherConfiguration } from "./launcherConfiguration";
 import { planUtilityWindows, rectsOverlap, SPAWN_SCREEN_MARGIN, UTILITY_MIN_SIZE, type UtilityRole } from "./spawnPlacement";
 import { readSpawnContext, readSpawnAnchor, readLauncherMonitor, windowRectInWorkArea, waitForWindowCreated, placeCreatedWindow } from "./windowSpawning";
 import { loadState, updateState, transactState, stateChannel as channel } from "./persistence";
+import { observeUtilityFocus } from "./utilityLifecycle";
+import { createLifetime } from "./lifetime";
 import { noteBody, hasOpenTasks } from "./noteContent";
 import { RecoveryWindow } from "./RecoveryWindow";
 import "./App.css";
@@ -144,9 +146,7 @@ function LauncherWindow() {
   let togglingNoteVisibility = false;
 
   onMount(() => {
-    let movedUnlisten: (() => void) | undefined;
-    let settingsUnlisten: (() => void) | undefined;
-    let disposed = false;
+    const life = createLifetime(() => recordDiagnostic("native-command-failed"));
     let moveSaveTimer: number | undefined;
 
     const onMessage = (event: MessageEvent) => {
@@ -164,29 +164,25 @@ function LauncherWindow() {
 
     if (isTauri()) {
       const drainSettingsRequest = async () => {
-        if (!disposed && await invoke<boolean>("take_settings_request")) await openSettingsWindow();
+        if (life.active && await invoke<boolean>("take_settings_request") && life.active) await openSettingsWindow();
       };
       const reportSettingsFailure = () => console.error("Settings creation failed (details redacted)");
-      void listen("simeioma:settings-requested", () => {
+      const settingsSubscription = listen("simeioma:settings-requested", life.guard(() => {
         void drainSettingsRequest().catch(reportSettingsFailure);
-      }).then((unlisten) => {
-        if (disposed) { unlisten(); return; }
-        settingsUnlisten = unlisten;
-        void drainSettingsRequest().catch(reportSettingsFailure);
-      }).catch(reportSettingsFailure);
-      getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      }));
+      life.own(settingsSubscription);
+      life.after(settingsSubscription, () => drainSettingsRequest());
+      life.own(getCurrentWindow().onFocusChanged(life.guard(({ payload: focused }) => {
         if (!focused && menuOpen()) setMenuOpen(false);
-      });
-      getCurrentWindow().onMoved(() => {
+      })));
+      life.own(getCurrentWindow().onMoved(life.guard(() => {
         if (launcherIsConfiguring) return;
         window.clearTimeout(moveSaveTimer);
         if (launcherUserDragging()) return;
         moveSaveTimer = window.setTimeout(() => {
-          void settleLauncherPosition();
+          if (life.active) void settleLauncherPosition();
         }, 80);
-      }).then((unlisten) => {
-        movedUnlisten = unlisten;
-      });
+      })));
     }
 
     onCleanup(() => {
@@ -195,9 +191,7 @@ function LauncherWindow() {
       window.clearTimeout(dragTimer);
       window.clearTimeout(moveSaveTimer);
       window.clearTimeout(settleDragTimer);
-      disposed = true;
-      movedUnlisten?.();
-      settingsUnlisten?.();
+      life.dispose();
     });
   });
 
@@ -512,25 +506,11 @@ function LauncherWindow() {
 
 function SettingsWindow() {
   const [state, setState] = createSignal(loadState());
-  const syncTopmostWithFocus = createUtilityTopmostController();
-
   onMount(() => {
-    configureUtilityWindow();
-    ensureDefaultExportPath(setState);
-
-    let focusUnlisten: (() => void) | undefined;
-    let focusEventSeen = false;
-    if (isTauri()) {
-      void getCurrentWindow().isFocused().then((focused) => {
-        if (!focusEventSeen) void syncTopmostWithFocus(focused);
-      });
-      getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-        focusEventSeen = true;
-        void syncTopmostWithFocus(focused);
-      }).then((unlisten) => {
-        focusUnlisten = unlisten;
-      });
-    }
+    const life = createLifetime(() => recordDiagnostic("native-command-failed"));
+    life.own(observeUtilityFocus());
+    life.after(configureUtilityWindow(), () => {});
+    life.after(ensureDefaultExportPath(life.guard(setState), () => life.active), () => {});
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type === "state") {
         setState(loadState());
@@ -539,7 +519,7 @@ function SettingsWindow() {
     channel?.addEventListener("message", onMessage);
     onCleanup(() => {
       channel?.removeEventListener("message", onMessage);
-      focusUnlisten?.();
+      life.dispose();
     });
   });
 
@@ -572,32 +552,16 @@ function SettingsWindow() {
 function NotesListWindow() {
   const [state, setState] = createSignal(loadState());
   const [confirmingDeleteAll, setConfirmingDeleteAll] = createSignal(false);
-  const syncTopmostWithFocus = createUtilityTopmostController();
 
   createEffect(() => {
     if (!state().notes.length) setConfirmingDeleteAll(false);
   });
 
   onMount(() => {
-    configureUtilityWindow();
-    let focusUnlisten: (() => void) | undefined;
-    let stateUnlisten: (() => void) | undefined;
-    let focusEventSeen = false;
-    if (isTauri()) {
-      void getCurrentWindow().isFocused().then((focused) => {
-        if (!focusEventSeen) void syncTopmostWithFocus(focused);
-      });
-      getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-        focusEventSeen = true;
-        void syncTopmostWithFocus(focused);
-        if (!focused) setConfirmingDeleteAll(false);
-      }).then((unlisten) => {
-        focusUnlisten = unlisten;
-      });
-      listen("simeioma:state-changed", () => setState(loadState())).then((unlisten) => {
-        stateUnlisten = unlisten;
-      });
-    }
+    const life = createLifetime(() => recordDiagnostic("native-command-failed"));
+    life.after(configureUtilityWindow(), () => {});
+    life.own(observeUtilityFocus(() => setConfirmingDeleteAll(false)));
+    if (isTauri()) life.own(listen("simeioma:state-changed", life.guard(() => setState(loadState()))));
 
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type === "state") {
@@ -607,8 +571,7 @@ function NotesListWindow() {
     channel?.addEventListener("message", onMessage);
     onCleanup(() => {
       channel?.removeEventListener("message", onMessage);
-      focusUnlisten?.();
-      stateUnlisten?.();
+      life.dispose();
     });
   });
 
@@ -676,6 +639,7 @@ function NotesListWindow() {
 }
 
 function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
+  const life = createLifetime(() => recordDiagnostic("native-command-failed"));
   const [state, setState] = createSignal(loadState());
   const [paletteOpen, setPaletteOpen] = createSignal(false);
   const [scribble, setScribble] = createSignal(false);
@@ -749,7 +713,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
   onMount(() => {
     const initializeNoteWindow = async () => {
       let hydrated = false;
-      for (let attempt = 0; attempt <= 12; attempt += 1) {
+      for (let attempt = 0; attempt <= 12 && life.active; attempt += 1) {
         const latest = loadState();
         setState(latest);
         if (latest.notes.some((item) => item.id === props.noteId)) {
@@ -758,33 +722,31 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
         }
         await sleep(25);
       }
-      if (!hydrated) {
-        await closeCurrentWindow();
+      if (!life.active) return;
+      if (!hydrated) {        await closeCurrentWindow();
         return;
       }
-      await configureNoteWindow(props.noteId);
-      await markCurrentNoteViewed(props.noteId, setState);
-      window.setTimeout(hydrateCanvas, 0);
+      await configureNoteWindow(props.noteId, () => life.active);
+      if (!life.active) return;
+      await markCurrentNoteViewed(props.noteId, life.guard(setState), () => life.active);
+      if (!life.active) return;
+      life.delay(hydrateCanvas, 0);
       await emitTo("main", "simeioma:note-window-ready", { noteId: props.noteId });
     };
-    void initializeNoteWindow();
-    if (props.autoFocus) focusFirstLine();
+    life.after(initializeNoteWindow(), () => {});
+    if (props.autoFocus) focusFirstLine(() => life.active);
     hydrateCanvas();
     const canvasForResize = canvasRef;
     const canvasResizeObserver = typeof ResizeObserver === "undefined" || !canvasForResize
       ? undefined
       : new ResizeObserver(() => scheduleCanvasHydration());
     if (canvasResizeObserver && canvasForResize) canvasResizeObserver.observe(canvasForResize);
-    let movedUnlisten: (() => void) | undefined;
-    let resizedUnlisten: (() => void) | undefined;
-    let focusUnlisten: (() => void) | undefined;
-    let textCommandUnlisten: (() => void) | undefined;
     let moveSaveTimer: number | undefined;
     let sizeSaveTimer: number | undefined;
 
     if (isTauri()) {
-      void getCurrentWindow().isFocused().then(setWindowFocused);
-      getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      life.after(getCurrentWindow().isFocused(), setWindowFocused);
+      life.own(getCurrentWindow().onFocusChanged(life.guard(({ payload: focused }) => {
         setWindowFocused(focused);
         if (focused) {
           channel?.postMessage({ type: "note-focused", noteId: props.noteId });
@@ -794,33 +756,25 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
           setPaletteOpen(false);
           channel?.postMessage({ type: "dismiss-text-menu" });
         }
-      }).then((unlisten) => {
-        focusUnlisten = unlisten;
-      });
-      getCurrentWindow().listen<{ field: string; command: string; text?: string; start?: number; end?: number }>("text-menu-command", ({ payload }) => {
-        void applyTextMenuCommand(payload.field, payload.command, payload.text, payload.start, payload.end);
-      }).then((unlisten) => {
-        textCommandUnlisten = unlisten;
-      });
-      getCurrentWindow().onMoved(({ payload }) => {
+      })));
+      life.own(getCurrentWindow().listen<{ field: string; command: string; text?: string; start?: number; end?: number }>("text-menu-command", life.guard(({ payload }) => {
+        life.after(applyTextMenuCommand(payload.field, payload.command, payload.text, payload.start, payload.end), () => {});
+      })));
+      life.own(getCurrentWindow().onMoved(life.guard(({ payload }) => {
         window.clearTimeout(moveSaveTimer);
-        moveSaveTimer = window.setTimeout(async () => {
-          const scale = await getCurrentWindow().scaleFactor();
-          persistNotePosition(props.noteId, { x: payload.x / scale, y: payload.y / scale }, setState);
+        moveSaveTimer = window.setTimeout(() => {
+          if (life.active) life.after(getCurrentWindow().scaleFactor(), scale =>
+            persistNotePosition(props.noteId, { x: payload.x / scale, y: payload.y / scale }, life.guard(setState)));
         }, 80);
-      }).then((unlisten) => {
-        movedUnlisten = unlisten;
-      });
-      getCurrentWindow().onResized(({ payload }) => {
+      })));
+      life.own(getCurrentWindow().onResized(life.guard(({ payload }) => {
         scheduleCanvasHydration();
         window.clearTimeout(sizeSaveTimer);
-        sizeSaveTimer = window.setTimeout(async () => {
-          const scale = await getCurrentWindow().scaleFactor();
-          persistNoteSize(props.noteId, { width: payload.width / scale, height: payload.height / scale }, setState);
+        sizeSaveTimer = window.setTimeout(() => {
+          if (life.active) life.after(getCurrentWindow().scaleFactor(), scale =>
+            persistNoteSize(props.noteId, { width: payload.width / scale, height: payload.height / scale }, life.guard(setState)));
         }, 80);
-      }).then((unlisten) => {
-        resizedUnlisten = unlisten;
-      });
+      })));
     }
 
     const onMessage = (event: MessageEvent) => {
@@ -846,10 +800,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
       canvasResizeObserver?.disconnect();
       window.clearTimeout(moveSaveTimer);
       window.clearTimeout(sizeSaveTimer);
-      movedUnlisten?.();
-      resizedUnlisten?.();
-      focusUnlisten?.();
-      textCommandUnlisten?.();
+      life.dispose();
     });
   });
 
@@ -889,7 +840,9 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
       target.setSelection({ start: start!, end: end! });
     }
     if (command === "paste") {
-      target.replaceSelection(payloadText || await readClipboardText());
+      const text = payloadText || await readClipboardText();
+      if (!life.active) return;
+      target.replaceSelection(text);
       syncAfterLineEdit();
       return;
     }
@@ -994,14 +947,14 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     if (!current) return;
     setBodyDraft(rawText);
     void persistNoteBody(props.noteId, current.lines[0]?.id ?? createId(), rawText).then(() => {
-      if (bodyDraft() === rawText) { setState(loadState()); setBodyDraft(undefined); }
+      if (life.active && bodyDraft() === rawText) { setState(loadState()); setBodyDraft(undefined); }
     }).catch(() => {}); // Preserve the visible draft on failure; persistence reports it.
   };
 
   const updateRightText = (rawText: string) => {
     setRightDraft(rawText);
     void persistNoteRightText(props.noteId, rawText).then(() => {
-      if (rightDraft() === rawText) { setState(loadState()); setRightDraft(undefined); }
+      if (life.active && rightDraft() === rawText) { setState(loadState()); setRightDraft(undefined); }
     }).catch(() => {});
   };
 
@@ -1289,6 +1242,7 @@ function NoteWindow(props: { noteId: string; autoFocus: boolean }) {
     if (current?.sketchData) {
       const image = new Image();
       image.onload = () => {
+        if (!life.active) return;
         clearSketchCanvas(context);
         context.drawImage(image, 0, 0, context.canvas.width, context.canvas.height);
         renderStrokes();
@@ -1489,12 +1443,12 @@ function persistNoteRightText(noteId: string, rightText: string) {
   );
 }
 
-async function ensureDefaultExportPath(setState: (state: AppState) => void) {
+async function ensureDefaultExportPath(setState: (state: AppState) => void, active = () => true) {
   if (!isTauri()) return;
   if (loadState().settings.exportPath) return;
   const exportPath = await documentDir();
   await updateState(
-    (state) => state.settings.exportPath ? state : ({
+    (state) => !active() || state.settings.exportPath ? state : ({
       ...state,
       settings: { ...state.settings, exportPath },
     }),
@@ -1502,8 +1456,8 @@ async function ensureDefaultExportPath(setState: (state: AppState) => void) {
   );
 }
 
-function markCurrentNoteViewed(noteId: string, setState?: (state: AppState) => void) {
-  return updateState((state) => markNoteViewed(state, noteId, new Date().toISOString()), { setState });
+function markCurrentNoteViewed(noteId: string, setState?: (state: AppState) => void, active = () => true) {
+  return updateState((state) => active() ? markNoteViewed(state, noteId, new Date().toISOString()) : state, { setState });
 }
 
 function persistNotePosition(noteId: string, position: { x: number; y: number }, setState?: (state: AppState) => void) {
@@ -1644,13 +1598,13 @@ async function readWindowAnchor(work?: WorkArea): Promise<LauncherAnchor> {
   });
 }
 
-async function configureNoteWindow(noteId: string) {
+async function configureNoteWindow(noteId: string, active = () => true) {
   if (!isTauri()) return;
   const appWindow = getCurrentWindow();
   const note = loadState().notes.find((item) => item.id === noteId);
   const size = note?.size ?? { width: DEFAULT_NOTE_SIZE, height: DEFAULT_NOTE_SIZE };
   await appWindow.setSkipTaskbar(true);
-  await appWindow.setSize(new LogicalSize(size.width, size.height));
+  if (active()) await appWindow.setSize(new LogicalSize(size.width, size.height));
 }
 
 async function configureUtilityWindow() {
@@ -1838,11 +1792,6 @@ async function closeAuxiliaryWindows() {
   }
 }
 
-function createUtilityTopmostController() {
-  const label = getCurrentWindow().label;
-  return (focused: boolean) => invoke("set_utility_focus_state", { label, focused });
-}
-
 function preventUtilityClipboard(event: ClipboardEvent) {
   event.preventDefault();
 }
@@ -1921,9 +1870,9 @@ async function createUtilityWindow(role: UtilityRole) {
   await webview.setFocus();
 }
 
-function focusFirstLine() {
+function focusFirstLine(active = () => true) {
   window.setTimeout(() => {
-    document.querySelector<HTMLElement>(".markdown-editor")?.focus();
+    if (active()) document.querySelector<HTMLElement>(".markdown-editor")?.focus();
   }, 0);
 }
 

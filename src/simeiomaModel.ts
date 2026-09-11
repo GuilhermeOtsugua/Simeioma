@@ -323,3 +323,7 @@ function parseTimeOfDay(value: string): [number | null, number | null] {
   return [hour, minute];
 }
 
+
+export function getColor(key = NOTE_COLORS[0].key) {
+  return NOTE_COLORS.find((color) => color.key === key) ?? NOTE_COLORS[0];
+}

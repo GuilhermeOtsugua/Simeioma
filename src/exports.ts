@@ -6,10 +6,7 @@ import { NOTE_COLORS, type Note, type Settings, type ExportFormat } from "./sime
 import { planImageExport, noteLabelText, noteToMarkdown, notesToMarkdown, notesToText } from "./exportModel";
 import { renderSketchRecord } from "./sketch";
 
-export async function copyText(value: string) {
-  if (isTauri()) await invoke("write_clipboard_text", { text: value });
-  else await navigator.clipboard.writeText(value);
-}
+import { copyText } from "./clipboard";
 function download(filename: string, bytes: Uint8Array, type: string) {
   const url = URL.createObjectURL(new Blob([bytes], { type }));
   const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url);

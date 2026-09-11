@@ -401,6 +401,7 @@ pub fn run() {
             write_clipboard_text,
             take_settings_request,
             window_spawn_geometry,
+            diagnostics_smoke::smoke_assert,
             diagnostics::debug_record,
             diagnostics::debug_register,
             diagnostics::debug_before_resize,

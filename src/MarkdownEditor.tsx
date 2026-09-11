@@ -1,4 +1,5 @@
 import { createEffect, onCleanup, onMount, type JSX } from "solid-js";
+import { commitComposition } from "./composition";
 import { sourceLines, taskLine } from "./noteContent";
 import {
   applyMarkdownEdit,
@@ -52,7 +53,8 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   let pendingStrikeSelection: SourceSelection | null = null;
   let revealedTokenFrom: number | null = null;
   let pendingArrowDirection: "left" | "right" | null = null;
-  let compositionHistoryRecorded = false;
+  let compositionBase: HistoryEntry | undefined;
+  let compositionText = "";
   let renderedSource = "";
   let renderedSelection = "";
   let activeTokenStarts = new Set<number>();
@@ -401,29 +403,31 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
 
   const beginComposition = () => {
     rememberSelection();
-    if (!compositionHistoryRecorded) {
-      undoStack.push({ value: source, selection });
-      redoStack = [];
-      compositionHistoryRecorded = true;
-    }
+    compositionBase = { value: source, selection: { ...selection } };
+    compositionText = source;
+    // Native IME must edit source, never a presentation that omitted Markdown delimiters.
+    element.replaceChildren();
+    appendText(element, source, 0, source.length);
+    setDomSelection(selection);
     composing = true;
   };
 
   const syncComposition = () => {
-    if (!composing) return;
-    source = element.innerText.replace(/\r\n/g, "\n");
-    selection = selectionFromDom() ?? { start: source.length, end: source.length };
-    renderedSource = "";
-    notify();
+    if (composing) compositionText = element.innerText.replace(/\r\n/g, "\n");
   };
 
   const finishComposition = () => {
-    if (!composing) return;
+    if (!composing || !compositionBase) return;
     syncComposition();
+    const base = compositionBase;
+    const result = commitComposition(base.value, base.selection, compositionText);
     composing = false;
-    compositionHistoryRecorded = false;
+    compositionBase = undefined;
+    source = base.value;
+    selection = base.selection;
     renderedSource = "";
-    render();
+    if (result && result.value !== base.value) edit(result.value, result.selection);
+    else render(); // Cancellation or an invalid DOM change preserves the original and history.
   }; 
 
   const undo = () => {
@@ -473,6 +477,7 @@ export function MarkdownEditor(props: MarkdownEditorProps) {
   };
 
   const handleKeyDown: JSX.EventHandlerUnion<HTMLDivElement, KeyboardEvent> = (event) => {
+    if (composing || event.isComposing) return;
     if (!event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       rememberSelection();
       const direction = event.key === "ArrowLeft" ? "left" : "right";
